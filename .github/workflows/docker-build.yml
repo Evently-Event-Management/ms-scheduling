@@ -9,6 +9,12 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    env:
+      DOCKER_USER: ${{ vars.DOCKERHUB_USERNAME }}    # Organization variable
+      DOCKER_PASS: ${{ secrets.DOCKERHUB_TOKEN }}    # Organization secret
+      IMAGE_NAME: event-command-service
+      IMAGE_TAG: latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
