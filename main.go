@@ -19,14 +19,15 @@ import (
 
 // Config holds all the configuration for our service, loaded from environment variables.
 type Config struct {
-	SQSQueueURL     string
-	AWSRegion       string
-	AWSEndpoint     string // For LocalStack
-	EventServiceURL string
-	KeycloakURL     string
-	KeycloakRealm   string
-	ClientID        string
-	ClientSecret    string
+	AWSRegion          string
+	AWSEndpoint        string // For LocalStack
+	EventServiceURL    string
+	KeycloakURL        string
+	KeycloakRealm      string
+	ClientID           string
+	ClientSecret       string
+	SQSONSaleQueueURL  string
+	SQSSoldOutQueueURL string
 }
 
 // M2MTokenResponse defines the structure of the token response from Keycloak.
@@ -59,23 +60,41 @@ func main() {
 		}
 		log.Println("Successfully obtained M2M token")
 
-		message, err := receiveMessage(cfg)
+		// Check ON_SALE queue
+		onSaleMessage, err := receiveMessage(cfg, cfg.SQSONSaleQueueURL)
 		if err != nil {
-			log.Printf("Error receiving message from SQS: %v", err)
+			log.Printf("Error receiving message from ON_SALE SQS queue: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		if message == nil {
-			log.Println("No message received from SQS, continuing loop")
+		if onSaleMessage != nil {
+			log.Printf("Received SQS message from ON_SALE queue: %+v", onSaleMessage)
+			err = processSessionMessage(cfg, httpClient, accessToken, onSaleMessage)
+			if err != nil {
+				log.Printf("Error processing ON_SALE message for session %s: %v", onSaleMessage.SessionID, err)
+			}
+			continue // Process one message at a time
+		}
+
+		// Check SOLD_OUT queue
+		soldOutMessage, err := receiveMessage(cfg, cfg.SQSSoldOutQueueURL)
+		if err != nil {
+			log.Printf("Error receiving message from SOLD_OUT SQS queue: %v", err)
+			time.Sleep(5 * time.Second)
 			continue
 		}
-		log.Printf("Received SQS message: %+v", message)
 
-		err = processMessage(cfg, httpClient, accessToken, message)
-		if err != nil {
-			log.Printf("Error processing message for session %s: %v", message.SessionID, err)
+		if soldOutMessage != nil {
+			log.Printf("Received SQS message from SOLD_OUT queue: %+v", soldOutMessage)
+			err = processSessionMessage(cfg, httpClient, accessToken, soldOutMessage)
+			if err != nil {
+				log.Printf("Error processing SOLD_OUT message for session %s: %v", soldOutMessage.SessionID, err)
+			}
+			continue // Process one message at a time
 		}
+
+		log.Println("No messages received from either queue, continuing loop")
 	}
 }
 
@@ -121,11 +140,8 @@ func getM2MToken(cfg Config, client *http.Client) (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
-// receiveMessage performs a long poll on the SQS queue.
-func receiveMessage(cfg Config) (*SQSMessageBody, error) {
-	// ✅ This is the key change. The AWS SDK will automatically use the default
-	// credential chain (e.g., IAM role in production, ~/.aws/credentials locally)
-	// when no explicit endpoint is provided.
+// receiveMessage performs a long poll on the specified SQS queue.
+func receiveMessage(cfg Config, queueURL string) (*SQSMessageBody, error) {
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(cfg.AWSRegion))
 	if err != nil {
 		return nil, fmt.Errorf("unable to load AWS SDK config, %v", err)
@@ -140,9 +156,9 @@ func receiveMessage(cfg Config) (*SQSMessageBody, error) {
 	})
 
 	result, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
-		QueueUrl:            &cfg.SQSQueueURL,
+		QueueUrl:            &queueURL,
 		MaxNumberOfMessages: 1,
-		WaitTimeSeconds:     20, // Enables long polling
+		WaitTimeSeconds:     5, // Reduced polling time to check both queues more frequently
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive message, %v", err)
@@ -156,16 +172,16 @@ func receiveMessage(cfg Config) (*SQSMessageBody, error) {
 	var body SQSMessageBody
 	if err := json.Unmarshal([]byte(*message.Body), &body); err != nil {
 		log.Printf("Error unmarshalling message body: %v", err)
-		deleteMessage(cfg, sqsClient, message.ReceiptHandle)
+		deleteMessage(queueURL, sqsClient, message.ReceiptHandle)
 		return nil, nil
 	}
 
-	deleteMessage(cfg, sqsClient, message.ReceiptHandle)
+	deleteMessage(queueURL, sqsClient, message.ReceiptHandle)
 	return &body, nil
 }
 
-// processMessage makes the API call to the Event Service to update the session status.
-func processMessage(cfg Config, client *http.Client, token string, msg *SQSMessageBody) error {
+// processSessionMessage makes the API call to the Event Service to update the session status.
+func processSessionMessage(cfg Config, client *http.Client, token string, msg *SQSMessageBody) error {
 	var apiPath string
 
 	// Use a switch to determine the correct API endpoint based on the action.
@@ -209,16 +225,16 @@ func processMessage(cfg Config, client *http.Client, token string, msg *SQSMessa
 }
 
 // deleteMessage removes a message from the SQS queue.
-func deleteMessage(cfg Config, client *sqs.Client, receiptHandle *string) {
-	log.Printf("Deleting message from SQS (receipt handle: %s)", *receiptHandle)
+func deleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
+	log.Printf("Deleting message from SQS queue %s (receipt handle: %s)", queueURL, *receiptHandle)
 	_, err := client.DeleteMessage(context.TODO(), &sqs.DeleteMessageInput{
-		QueueUrl:      &cfg.SQSQueueURL,
+		QueueUrl:      &queueURL,
 		ReceiptHandle: receiptHandle,
 	})
 	if err != nil {
-		log.Printf("Error deleting message from SQS: %v", err)
+		log.Printf("Error deleting message from SQS queue %s: %v", queueURL, err)
 	} else {
-		log.Printf("Message deleted from SQS successfully")
+		log.Printf("Message deleted from SQS queue %s successfully", queueURL)
 	}
 }
 
@@ -226,15 +242,15 @@ func deleteMessage(cfg Config, client *sqs.Client, receiptHandle *string) {
 func loadConfig() Config {
 	log.Println("Loading configuration from environment variables")
 	return Config{
-		// ✅ FIXED: Use the correct LocalStack SQS URL format
-		SQSQueueURL:     getEnv("SQS_QUEUE_URL", ""),
-		AWSRegion:       getEnv("AWS_REGION", "us-east-1"),
-		AWSEndpoint:     getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
-		EventServiceURL: getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
-		KeycloakURL:     getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
-		KeycloakRealm:   getEnv("KEYCLOAK_REALM", "event-ticketing"),
-		ClientID:        getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
-		ClientSecret:    getEnv("SCHEDULER_CLIENT_SECRET", ""),
+		SQSONSaleQueueURL:  getEnv("SQS_ON_SALE_QUEUE_URL", ""),
+		SQSSoldOutQueueURL: getEnv("SQS_SOLD_OUT_QUEUE_URL", ""),
+		AWSRegion:          getEnv("AWS_REGION", "us-east-1"),
+		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
+		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
+		KeycloakURL:        getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
+		KeycloakRealm:      getEnv("KEYCLOAK_REALM", "event-ticketing"),
+		ClientID:           getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
+		ClientSecret:       getEnv("SCHEDULER_CLIENT_SECRET", ""),
 	}
 }
 
