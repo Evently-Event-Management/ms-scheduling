@@ -34,9 +34,10 @@ type M2MTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-// SQSMessageBody defines the structure of the message we expect from the SQS queue.
+// SQSMessageBody defines the structure of the message we expect.
 type SQSMessageBody struct {
 	SessionID string `json:"sessionId"`
+	Action    string `json:"action"` // e.g., "ON_SALE", "SOLD_OUT"
 }
 
 // Main application loop
@@ -165,16 +166,27 @@ func receiveMessage(cfg Config) (*SQSMessageBody, error) {
 
 // processMessage makes the API call to the Event Service to update the session status.
 func processMessage(cfg Config, client *http.Client, token string, msg *SQSMessageBody) error {
-	apiURL := fmt.Sprintf("%s/internal/v1/sessions/%s/on-sale", cfg.EventServiceURL, msg.SessionID)
+	var apiPath string
+
+	// Use a switch to determine the correct API endpoint based on the action.
+	switch msg.Action {
+	case "ON_SALE":
+		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/on-sale", msg.SessionID)
+	case "SOLD_OUT":
+		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/sold-out", msg.SessionID)
+	default:
+		return fmt.Errorf("unknown action in SQS message: %s", msg.Action)
+	}
+
+	apiURL := cfg.EventServiceURL + apiPath
 	log.Printf("Calling Event Service API: %s", apiURL)
 
-	// Empty payload for PATCH request as the endpoint doesn't require body data
 	req, _ := http.NewRequest("PATCH", apiURL, nil)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	log.Printf("Sending PATCH request to Event Service for session %s", msg.SessionID)
 	resp, err := client.Do(req)
+
 	if err != nil {
 		log.Printf("HTTP request to Event Service failed: %v", err)
 		return err
@@ -192,7 +204,7 @@ func processMessage(cfg Config, client *http.Client, token string, msg *SQSMessa
 		return fmt.Errorf("API call failed with status %s: %s", resp.Status, string(bodyBytes))
 	}
 
-	log.Printf("Successfully processed session %s, status set to ON_SALE", msg.SessionID)
+	log.Printf("Successfully processed action '%s' for session %s", msg.Action, msg.SessionID)
 	return nil
 }
 
