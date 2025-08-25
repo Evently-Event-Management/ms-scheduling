@@ -27,7 +27,7 @@ type Config struct {
 	ClientID           string
 	ClientSecret       string
 	SQSONSaleQueueURL  string
-	SQSSoldOutQueueURL string
+	SQSSClosedQueueURL string
 }
 
 // M2MTokenResponse defines the structure of the token response from Keycloak.
@@ -38,7 +38,7 @@ type M2MTokenResponse struct {
 // SQSMessageBody defines the structure of the message we expect.
 type SQSMessageBody struct {
 	SessionID string `json:"sessionId"`
-	Action    string `json:"action"` // e.g., "ON_SALE", "SOLD_OUT"
+	Action    string `json:"action"` // e.g., "ON_SALE", "CLOSED"
 }
 
 // Main application loop
@@ -77,19 +77,19 @@ func main() {
 			continue // Process one message at a time
 		}
 
-		// Check SOLD_OUT queue
-		soldOutMessage, err := receiveMessage(cfg, cfg.SQSSoldOutQueueURL)
+		// Check CLOSED queue
+		soldOutMessage, err := receiveMessage(cfg, cfg.SQSSClosedQueueURL)
 		if err != nil {
-			log.Printf("Error receiving message from SOLD_OUT SQS queue: %v", err)
+			log.Printf("Error receiving message from CLOSED SQS queue: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
 		if soldOutMessage != nil {
-			log.Printf("Received SQS message from SOLD_OUT queue: %+v", soldOutMessage)
+			log.Printf("Received SQS message from CLOSED queue: %+v", soldOutMessage)
 			err = processSessionMessage(cfg, httpClient, accessToken, soldOutMessage)
 			if err != nil {
-				log.Printf("Error processing SOLD_OUT message for session %s: %v", soldOutMessage.SessionID, err)
+				log.Printf("Error processing CLOSED message for session %s: %v", soldOutMessage.SessionID, err)
 			}
 			continue // Process one message at a time
 		}
@@ -188,8 +188,8 @@ func processSessionMessage(cfg Config, client *http.Client, token string, msg *S
 	switch msg.Action {
 	case "ON_SALE":
 		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/on-sale", msg.SessionID)
-	case "SOLD_OUT":
-		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/sold-out", msg.SessionID)
+	case "CLOSED":
+		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/closed", msg.SessionID) // changed from "sold-out" to "closed"
 	default:
 		return fmt.Errorf("unknown action in SQS message: %s", msg.Action)
 	}
@@ -242,8 +242,8 @@ func deleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
 func loadConfig() Config {
 	log.Println("Loading configuration from environment variables")
 	return Config{
-		SQSONSaleQueueURL:  getEnv("SQS_ON_SALE_QUEUE_URL", ""),
-		SQSSoldOutQueueURL: getEnv("SQS_SOLD_OUT_QUEUE_URL", ""),
+		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_QUEUE_ARN", ""),
+		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_QUEUE_ARN", ""),
 		AWSRegion:          getEnv("AWS_REGION", "us-east-1"),
 		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
