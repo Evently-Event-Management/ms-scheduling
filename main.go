@@ -242,8 +242,8 @@ func deleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
 func loadConfig() Config {
 	log.Println("Loading configuration from environment variables")
 	return Config{
-		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_QUEUE_ARN", ""),
-		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_QUEUE_ARN", ""),
+		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_QUEUE_URL", ""),
+		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_QUEUE_URL", ""),
 		AWSRegion:          getEnv("AWS_REGION", "us-east-1"),
 		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
