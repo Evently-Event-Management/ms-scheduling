@@ -242,12 +242,12 @@ func deleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
 func loadConfig() Config {
 	log.Println("Loading configuration from environment variables")
 	return Config{
-		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_QUEUE_URL", ""),
-		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_QUEUE_URL", ""),
+		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_URL", ""),
+		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_URL", ""),
 		AWSRegion:          getEnv("AWS_REGION", "us-east-1"),
 		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
-		KeycloakURL:        getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
+		KeycloakURL:        getEnv("KEYCLOAK_URL", "https://auth.dpiyumal.me:8080"),
 		KeycloakRealm:      getEnv("KEYCLOAK_REALM", "event-ticketing"),
 		ClientID:           getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
 		ClientSecret:       getEnv("SCHEDULER_CLIENT_SECRET", ""),
