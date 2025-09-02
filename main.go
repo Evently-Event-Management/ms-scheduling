@@ -244,7 +244,7 @@ func loadConfig() Config {
 	return Config{
 		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_URL", ""),
 		SQSSClosedQueueURL: getEnv("AWS_SQS_SESSION_CLOSED_URL", ""),
-		AWSRegion:          getEnv("AWS_REGION", "us-east-1"),
+		AWSRegion:          getEnv("AWS_REGION", "ap-south-1"),
 		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
 		KeycloakURL:        getEnv("KEYCLOAK_URL", "https://auth.dpiyumal.me:8080"),
