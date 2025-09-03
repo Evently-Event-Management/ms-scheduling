@@ -158,7 +158,7 @@ func receiveMessage(cfg Config, queueURL string) (*SQSMessageBody, error) {
 	result, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
 		QueueUrl:            &queueURL,
 		MaxNumberOfMessages: 1,
-		WaitTimeSeconds:     30,
+		WaitTimeSeconds:     20,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive message, %v", err)
