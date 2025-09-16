@@ -30,13 +30,9 @@ func GetM2MToken(cfg config.Config, client *http.Client) (string, error) {
 	req, _ := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-	clientWithTimeout := client
-	if clientWithTimeout.Timeout == 0 {
-		clientWithTimeout.Timeout = 10 * time.Second
-	}
-
-	log.Printf("Sending POST request to Keycloak for token with client_id: %s", cfg.ClientID)
-	resp, err := clientWithTimeout.Do(req)
+		// Do not mutate the passed client. Assume the caller sets timeout as needed.
+		log.Printf("Sending POST request to Keycloak for token with client_id: %s", cfg.ClientID)
+		resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("HTTP request to Keycloak failed: %v", err)
 		return "", err

@@ -42,8 +42,7 @@ func main() {
 		log.Println("Starting main loop iteration")
 
 		// We only need the token if we have a message to process.
-		// This is a small optimization to avoid unnecessary calls to Keycloak.
-		var accessToken string
+		// Use separate variables for ON_SALE and CLOSED to avoid accidental reuse.
 
 		// Check ON_SALE queue
 		rawOnSaleMessage, err := sqsutil.ReceiveMessage(sqsClient, cfg.SQSONSaleQueueURL)
@@ -66,7 +65,7 @@ func main() {
 			log.Printf("Received SQS message from ON_SALE queue: %+v", onSaleBody)
 
 			// Get token only when we need it
-			accessToken, err = auth.GetM2MToken(cfg, httpClient)
+			onSaleToken, err := auth.GetM2MToken(cfg, httpClient)
 			if err != nil {
 				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
 				time.Sleep(30 * time.Second)
@@ -74,7 +73,7 @@ func main() {
 			}
 
 			// Process the message
-			err = session.ProcessSessionMessage(cfg, httpClient, accessToken, &onSaleBody)
+			err = session.ProcessSessionMessage(cfg, httpClient, onSaleToken, &onSaleBody)
 			if err != nil {
 				log.Printf("Error processing ON_SALE message for session %s, will retry: %v", onSaleBody.SessionID, err)
 			} else {
@@ -103,14 +102,14 @@ func main() {
 
 			log.Printf("Received SQS message from CLOSED queue: %+v", closedBody)
 
-			accessToken, err = auth.GetM2MToken(cfg, httpClient)
+			closedToken, err := auth.GetM2MToken(cfg, httpClient)
 			if err != nil {
 				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
 				time.Sleep(30 * time.Second)
 				continue
 			}
 
-			err = session.ProcessSessionMessage(cfg, httpClient, accessToken, &closedBody)
+			err = session.ProcessSessionMessage(cfg, httpClient, closedToken, &closedBody)
 			if err != nil {
 				log.Printf("Error processing CLOSED message for session %s, will retry: %v", closedBody.SessionID, err)
 			} else {
