@@ -14,7 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	_ "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 // Config holds all the configuration for our service, loaded from environment variables.
@@ -46,55 +46,104 @@ func main() {
 	cfg := loadConfig()
 	log.Printf("Loaded config: %+v", cfg)
 
+	// Create clients once, outside the loop
 	httpClient := &http.Client{Timeout: 10 * time.Second}
-	log.Println("HTTP client initialized")
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(cfg.AWSRegion))
+	if err != nil {
+		log.Fatalf("unable to load AWS SDK config, %v", err)
+	}
+	sqsClient := sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
+		if cfg.AWSEndpoint != "" {
+			log.Printf("Using LocalStack endpoint for AWS services: %s", cfg.AWSEndpoint)
+			o.BaseEndpoint = &cfg.AWSEndpoint
+		}
+	})
+	log.Println("Clients initialized")
 
 	for {
 		log.Println("Starting main loop iteration")
 
-		accessToken, err := getM2MToken(cfg, httpClient)
-		if err != nil {
-			log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
-			time.Sleep(30 * time.Second)
-			continue
-		}
-		log.Println("Successfully obtained M2M token")
+		// We only need the token if we have a message to process.
+		// This is a small optimization to avoid unnecessary calls to Keycloak.
+		var accessToken string
 
 		// Check ON_SALE queue
-		onSaleMessage, err := receiveMessage(cfg, cfg.SQSONSaleQueueURL)
+		rawOnSaleMessage, err := receiveMessage(sqsClient, cfg.SQSONSaleQueueURL)
 		if err != nil {
 			log.Printf("Error receiving message from ON_SALE SQS queue: %v", err)
-			time.Sleep(5 * time.Second)
+			time.Sleep(5 * time.Second) // Wait before retrying
 			continue
 		}
 
-		if onSaleMessage != nil {
-			log.Printf("Received SQS message from ON_SALE queue: %+v", onSaleMessage)
-			err = processSessionMessage(cfg, httpClient, accessToken, onSaleMessage)
+		if rawOnSaleMessage != nil {
+			// Unmarshal the body here
+			var onSaleBody SQSMessageBody
+			if err := json.Unmarshal([]byte(*rawOnSaleMessage.Body), &onSaleBody); err != nil {
+				log.Printf("Error unmarshalling ON_SALE message body, deleting malformed message: %v", err)
+				// This is a "poison pill" message, delete it so it doesn't block the queue
+				deleteMessage(cfg.SQSONSaleQueueURL, sqsClient, rawOnSaleMessage.ReceiptHandle)
+				continue
+			}
+
+			log.Printf("Received SQS message from ON_SALE queue: %+v", onSaleBody)
+
+			// Get token only when we need it
+			accessToken, err = getM2MToken(cfg, httpClient)
 			if err != nil {
-				log.Printf("Error processing ON_SALE message for session %s: %v", onSaleMessage.SessionID, err)
+				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
+				time.Sleep(30 * time.Second)
+				continue
+			}
+
+			// Process the message
+			err = processSessionMessage(cfg, httpClient, accessToken, &onSaleBody)
+			if err != nil {
+				log.Printf("Error processing ON_SALE message for session %s, will retry: %v", onSaleBody.SessionID, err)
+			} else {
+				// SUCCESS! Now we can safely delete the message.
+				log.Printf("Successfully processed ON_SALE message, deleting from queue.")
+				deleteMessage(cfg.SQSONSaleQueueURL, sqsClient, rawOnSaleMessage.ReceiptHandle)
 			}
 			continue // Process one message at a time
 		}
 
-		// Check CLOSED queue
-		soldOutMessage, err := receiveMessage(cfg, cfg.SQSSClosedQueueURL)
+		// Check CLOSED queue (apply the same logic)
+		rawClosedMessage, err := receiveMessage(sqsClient, cfg.SQSSClosedQueueURL)
 		if err != nil {
 			log.Printf("Error receiving message from CLOSED SQS queue: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		if soldOutMessage != nil {
-			log.Printf("Received SQS message from CLOSED queue: %+v", soldOutMessage)
-			err = processSessionMessage(cfg, httpClient, accessToken, soldOutMessage)
-			if err != nil {
-				log.Printf("Error processing CLOSED message for session %s: %v", soldOutMessage.SessionID, err)
+		if rawClosedMessage != nil {
+			var closedBody SQSMessageBody
+			if err := json.Unmarshal([]byte(*rawClosedMessage.Body), &closedBody); err != nil {
+				log.Printf("Error unmarshalling CLOSED message body, deleting malformed message: %v", err)
+				deleteMessage(cfg.SQSSClosedQueueURL, sqsClient, rawClosedMessage.ReceiptHandle)
+				continue
 			}
-			continue // Process one message at a time
+
+			log.Printf("Received SQS message from CLOSED queue: %+v", closedBody)
+
+			accessToken, err = getM2MToken(cfg, httpClient)
+			if err != nil {
+				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
+				time.Sleep(30 * time.Second)
+				continue
+			}
+
+			err = processSessionMessage(cfg, httpClient, accessToken, &closedBody)
+			if err != nil {
+				log.Printf("Error processing CLOSED message for session %s, will retry: %v", closedBody.SessionID, err)
+			} else {
+				log.Printf("Successfully processed CLOSED message, deleting from queue.")
+				deleteMessage(cfg.SQSSClosedQueueURL, sqsClient, rawClosedMessage.ReceiptHandle)
+			}
+			continue
 		}
 
-		log.Println("No messages received from either queue, continuing loop")
+		log.Println("No messages received from either queue, sleeping for a moment.")
+		time.Sleep(1 * time.Second) // Small sleep to prevent a tight loop when idle
 	}
 }
 
@@ -140,21 +189,7 @@ func getM2MToken(cfg Config, client *http.Client) (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
-// receiveMessage performs a long poll on the specified SQS queue.
-func receiveMessage(cfg Config, queueURL string) (*SQSMessageBody, error) {
-	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(cfg.AWSRegion))
-	if err != nil {
-		return nil, fmt.Errorf("unable to load AWS SDK config, %v", err)
-	}
-
-	sqsClient := sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
-		// This block now only runs if you've explicitly set the local endpoint URL.
-		if cfg.AWSEndpoint != "" {
-			log.Printf("Using LocalStack endpoint for AWS services: %s", cfg.AWSEndpoint)
-			o.BaseEndpoint = &cfg.AWSEndpoint
-		}
-	})
-
+func receiveMessage(sqsClient *sqs.Client, queueURL string) (*types.Message, error) {
 	result, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
 		QueueUrl:            &queueURL,
 		MaxNumberOfMessages: 1,
@@ -168,16 +203,8 @@ func receiveMessage(cfg Config, queueURL string) (*SQSMessageBody, error) {
 		return nil, nil // No message received, this is normal
 	}
 
-	message := result.Messages[0]
-	var body SQSMessageBody
-	if err := json.Unmarshal([]byte(*message.Body), &body); err != nil {
-		log.Printf("Error unmarshalling message body: %v", err)
-		deleteMessage(queueURL, sqsClient, message.ReceiptHandle)
-		return nil, nil
-	}
-
-	deleteMessage(queueURL, sqsClient, message.ReceiptHandle)
-	return &body, nil
+	// Return the entire message, not just the body
+	return &result.Messages[0], nil
 }
 
 // processSessionMessage makes the API call to the Event Service to update the session status.
@@ -247,7 +274,7 @@ func loadConfig() Config {
 		AWSRegion:          getEnv("AWS_REGION", "ap-south-1"),
 		AWSEndpoint:        getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:    getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
-		KeycloakURL:        getEnv("KEYCLOAK_URL", "https://auth.dpiyumal.me:8080"),
+		KeycloakURL:        getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
 		KeycloakRealm:      getEnv("KEYCLOAK_REALM", "event-ticketing"),
 		ClientID:           getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
 		ClientSecret:       getEnv("SCHEDULER_CLIENT_SECRET", ""),
