@@ -11,6 +11,7 @@ Refactored for maintainability by splitting monolithic `main.go` into internal p
 - `internal/sqsutil` – SQS helper utilities (receive & delete messages).
 - `internal/session` – business logic for processing session state changes.
 - `internal/kafka` – Kafka consumer for processing Debezium events.
+- `internal/scheduler` – AWS EventBridge scheduler operations for event scheduling.
 
 ## Build & Run
 
