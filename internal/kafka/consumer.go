@@ -82,7 +82,7 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				after.ID,
 				onSaleTime,
 				"session-onsale-",
-				c.Config.SQSONSaleQueueARN,
+				c.Config.SQSSessionSchedulingQueueARN,
 				"ON_SALE",
 				"on-sale job",
 			)
@@ -97,7 +97,7 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				after.ID,
 				closedTime,
 				"session-closed-",
-				c.Config.SQSClosedQueueARN,
+				c.Config.SQSSessionSchedulingQueueARN,
 				"CLOSED",
 				"closed job",
 			)
@@ -132,7 +132,7 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				after.ID,
 				onSaleTime,
 				"session-onsale-",
-				c.Config.SQSONSaleQueueARN,
+				c.Config.SQSSessionSchedulingQueueARN,
 				"ON_SALE",
 				"on-sale job",
 			)
@@ -148,7 +148,7 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				after.ID,
 				closedTime,
 				"session-closed-",
-				c.Config.SQSClosedQueueARN,
+				c.Config.SQSSessionSchedulingQueueARN,
 				"CLOSED",
 				"closed job",
 			)

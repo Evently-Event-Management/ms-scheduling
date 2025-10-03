@@ -56,8 +56,10 @@ The application uses environment variables for configuration. You can set these 
 ### Required Environment Variables
 
 ```
-AWS_SQS_SESSION_ON_SALE_URL=<SQS queue URL for on-sale events>
-AWS_SQS_SESSION_CLOSED_URL=<SQS queue URL for closed events>
+AWS_SQS_SESSION_SCHEDULING_URL=<SQS queue URL for all session scheduling events>
+AWS_SQS_SESSION_SCHEDULING_ARN=<SQS queue ARN for all session scheduling events>
+AWS_SCHEDULER_ROLE_ARN=<IAM role ARN for EventBridge Scheduler to access SQS>
+AWS_SCHEDULER_GROUP_NAME=<EventBridge Scheduler group name>
 SCHEDULER_CLIENT_SECRET=<Client secret for authentication>
 AWS_REGION=<AWS region, default: ap-south-1>
 ```

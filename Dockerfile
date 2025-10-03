@@ -29,8 +29,10 @@ ENV AWS_REGION="ap-south-1" \
     KAFKA_TOPIC=""
 
 # Required environment variables (these need to be provided at runtime)
-# AWS_SQS_SESSION_ON_SALE_URL
-# AWS_SQS_SESSION_CLOSED_URL
+# AWS_SQS_SESSION_SCHEDULING_URL
+# AWS_SQS_SESSION_SCHEDULING_ARN
+# AWS_SCHEDULER_ROLE_ARN
+# AWS_SCHEDULER_GROUP_NAME
 # SCHEDULER_CLIENT_SECRET
 
 # Copy the built binary from the builder stage
