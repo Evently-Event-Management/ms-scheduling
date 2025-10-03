@@ -45,6 +45,14 @@ func ProcessSessionMessage(cfg config.Config, client *http.Client, token string,
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Printf("Event Service response body: %s", string(bodyBytes))
+
+		// Special handling for 404 errors - if the session is not found, we consider the message processed
+		// This prevents an infinite loop of retrying non-existent sessions
+		if resp.StatusCode == http.StatusNotFound {
+			log.Printf("Session %s not found (404). Treating as successfully processed to avoid infinite retries.", msg.SessionID)
+			return nil
+		}
+
 		return fmt.Errorf("API call failed with status %s: %s", resp.Status, string(bodyBytes))
 	}
 
