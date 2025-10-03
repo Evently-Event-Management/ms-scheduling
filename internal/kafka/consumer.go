@@ -150,16 +150,28 @@ func (c *Consumer) createOrUpdateSchedule(sessionID string, scheduleTime time.Ti
 
 	// Format time for EventBridge Scheduler expression: at(YYYY-MM-DDTHH:mm:ss)
 	scheduleExpression := fmt.Sprintf("at(%s)", scheduleTime.UTC().Format("2006-01-02T15:04:05"))
-	inputJSON := fmt.Sprintf(`{"sessionId":"%s", "action":"%s"}`, sessionID, action)
+
+	// Use the SQSMessageBody struct to ensure consistency between producer and consumer
+	messageBody := models.SQSMessageBody{
+		SessionID: sessionID,
+		Action:    action,
+	}
+
+	// Marshal the struct to JSON
+	inputJSON, err := json.Marshal(messageBody)
+	if err != nil {
+		log.Printf("Error marshaling message body to JSON: %v", err)
+		return err
+	}
 
 	target := types.Target{
 		Arn:     aws.String(queueArn),
 		RoleArn: aws.String(c.Config.SchedulerRoleARN),
-		Input:   aws.String(inputJSON),
+		Input:   aws.String(string(inputJSON)),
 	}
 
 	// First, try to create the schedule
-	_, err := c.SchedulerClient.CreateSchedule(context.TODO(), &scheduler.CreateScheduleInput{
+	_, err = c.SchedulerClient.CreateSchedule(context.TODO(), &scheduler.CreateScheduleInput{
 		Name:                       aws.String(scheduleName),
 		GroupName:                  aws.String(c.Config.SchedulerGroupName),
 		ScheduleExpression:         aws.String(scheduleExpression),
