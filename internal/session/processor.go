@@ -53,6 +53,11 @@ func ProcessSessionMessage(cfg config.Config, client *http.Client, token string,
 			return nil
 		}
 
+		if resp.StatusCode == http.StatusConflict {
+			log.Printf("Session %s is in a conflicting state (409). Treating as successfully processed to avoid infinite retries.", msg.SessionID)
+			return nil
+		}
+
 		return fmt.Errorf("API call failed with status %s: %s", resp.Status, string(bodyBytes))
 	}
 
