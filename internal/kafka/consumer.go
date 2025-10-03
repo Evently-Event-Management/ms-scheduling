@@ -117,13 +117,19 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 		if after.SalesStartTime != before.SalesStartTime {
 			onSaleTime := microsecondsToTime(after.SalesStartTime)
 			log.Printf("Sales start time for session %s changed. Updating schedule.", after.ID)
-			c.createOrUpdateSchedule(after.ID, onSaleTime, "session-onsale-", c.Config.SQSONSaleQueueARN, "ON_SALE", "on-sale job")
+			err := c.createOrUpdateSchedule(after.ID, onSaleTime, "session-onsale-", c.Config.SQSONSaleQueueARN, "ON_SALE", "on-sale job")
+			if err != nil {
+				log.Printf("Error updating on-sale job for session %s: %v", after.ID, err)
+			}
 		}
 		// Check if end time changed
 		if after.EndTime != before.EndTime {
 			closedTime := microsecondsToTime(after.EndTime)
 			log.Printf("End time for session %s changed. Updating schedule.", after.ID)
-			c.createOrUpdateSchedule(after.ID, closedTime, "session-closed-", c.Config.SQSClosedQueueARN, "CLOSED", "closed job")
+			err := c.createOrUpdateSchedule(after.ID, closedTime, "session-closed-", c.Config.SQSClosedQueueARN, "CLOSED", "closed job")
+			if err != nil {
+				log.Printf("Error updating closed job for session %s: %v", after.ID, err)
+			}
 		}
 
 	case "d": // A session was deleted
