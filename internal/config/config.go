@@ -20,6 +20,10 @@ type Config struct {
 	SQSSClosedQueueURL string
 	KafkaURL           string
 	KafkaTopic         string
+	SQSONSaleQueueARN  string
+	SQSClosedQueueARN  string
+	SchedulerRoleARN   string
+	SchedulerGroupName string
 }
 
 // LoadEnv loads environment variables from .env files
@@ -60,6 +64,10 @@ func Load() Config {
 		ClientSecret:       getEnv("SCHEDULER_CLIENT_SECRET", ""),
 		KafkaURL:           getEnv("KAFKA_URL", "localhost:9092"),
 		KafkaTopic:         getEnv("KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
+		SQSONSaleQueueARN:  getEnv("AWS_SQS_SESSION_ON_SALE_QUEUE_ARN", ""),
+		SQSClosedQueueARN:  getEnv("AWS_SQS_SESSION_CLOSED_QUEUE_ARN", ""),
+		SchedulerRoleARN:   getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
+		SchedulerGroupName: getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
 	}
 }
 

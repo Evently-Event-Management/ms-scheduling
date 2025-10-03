@@ -9,6 +9,7 @@ import (
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
 	auth "ms-scheduling/internal/auth"
@@ -40,15 +41,17 @@ func main() {
 	})
 	log.Println("Clients initialized")
 
+	schedulerClient := scheduler.NewFromConfig(awsCfg)
+
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
 	if cfg.KafkaURL != "" && cfg.KafkaTopic != "" {
 		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.KafkaTopic, cfg.KafkaURL)
-		kafkaConsumer := kafka.NewConsumer(cfg.KafkaURL, cfg.KafkaTopic)
+		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.KafkaTopic, schedulerClient)
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			kafka.ConsumeDebeziumEvents(kafkaConsumer)
+			kafkaConsumer.ConsumeDebeziumEvents()
 		}()
 		// We don't wait for wg.Wait() so the SQS processing can continue
 	} else {
