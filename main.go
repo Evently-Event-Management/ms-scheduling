@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -12,6 +13,7 @@ import (
 
 	auth "ms-scheduling/internal/auth"
 	appconfig "ms-scheduling/internal/config"
+	"ms-scheduling/internal/kafka"
 	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/session"
 	"ms-scheduling/internal/sqsutil"
@@ -37,6 +39,21 @@ func main() {
 		}
 	})
 	log.Println("Clients initialized")
+
+	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
+	if cfg.KafkaURL != "" && cfg.KafkaTopic != "" {
+		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.KafkaTopic, cfg.KafkaURL)
+		kafkaConsumer := kafka.NewConsumer(cfg.KafkaURL, cfg.KafkaTopic)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kafka.ConsumeDebeziumEvents(kafkaConsumer)
+		}()
+		// We don't wait for wg.Wait() so the SQS processing can continue
+	} else {
+		log.Println("Kafka URL or topic not configured, skipping Kafka consumer setup")
+	}
 
 	for {
 		log.Println("Starting main loop iteration")

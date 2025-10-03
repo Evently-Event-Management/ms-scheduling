@@ -3,6 +3,9 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -15,9 +18,35 @@ type Config struct {
 	ClientSecret       string
 	SQSONSaleQueueURL  string
 	SQSSClosedQueueURL string
+	KafkaURL           string
+	KafkaTopic         string
+}
+
+// LoadEnv loads environment variables from .env files
+func LoadEnv() {
+	// Try to find the .env file from the current working directory
+	// and from the directory where the binary is located
+	envPaths := []string{
+		".env",    // Current directory
+		"../.env", // One level up
+		filepath.Join(os.Getenv("HOME"), "projects/ticketly/ms-scheduling/.env"), // Specific project path
+	}
+
+	for _, path := range envPaths {
+		err := godotenv.Load(path)
+		if err == nil {
+			log.Printf("Loaded environment variables from %s", path)
+			return
+		}
+	}
+
+	log.Println("No .env file found, using environment variables")
 }
 
 func Load() Config {
+	// Load environment variables from .env file first
+	LoadEnv()
+
 	log.Println("Loading configuration from environment variables")
 	return Config{
 		SQSONSaleQueueURL:  getEnv("AWS_SQS_SESSION_ON_SALE_URL", ""),
@@ -29,6 +58,8 @@ func Load() Config {
 		KeycloakRealm:      getEnv("KEYCLOAK_REALM", "event-ticketing"),
 		ClientID:           getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
 		ClientSecret:       getEnv("SCHEDULER_CLIENT_SECRET", ""),
+		KafkaURL:           getEnv("KAFKA_URL", "localhost:9092"),
+		KafkaTopic:         getEnv("KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 	}
 }
 
