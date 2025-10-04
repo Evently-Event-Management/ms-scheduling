@@ -1,0 +1,20 @@
+.
+├── Dockerfile
+├── go.mod
+├── go.sum
+├── internal
+│   ├── auth
+│   │   └── token.go
+│   ├── config
+│   │   └── config.go
+│   ├── models
+│   │   └── models.go
+│   ├── session
+│   │   └── processor.go
+│   └── sqsutil
+│       └── sqs.go
+├── main.go
+├── README.md
+└── t.txt
+
+7 directories, 11 files

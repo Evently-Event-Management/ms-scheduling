@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsscheduler "github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	auth "ms-scheduling/internal/auth"
 	appconfig "ms-scheduling/internal/config"
+	"ms-scheduling/internal/kafka"
 	"ms-scheduling/internal/models"
+	"ms-scheduling/internal/scheduler"
 	"ms-scheduling/internal/session"
 	"ms-scheduling/internal/sqsutil"
 )
@@ -38,88 +43,95 @@ func main() {
 	})
 	log.Println("Clients initialized")
 
+	schedulerClient := awsscheduler.NewFromConfig(awsCfg)
+
+	// Initialize the scheduler service
+	schedulerService := scheduler.NewService(cfg, schedulerClient)
+
+	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
+	if cfg.KafkaURL != "" && cfg.KafkaTopic != "" {
+		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.KafkaTopic, cfg.KafkaURL)
+		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.KafkaTopic, schedulerService)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kafkaConsumer.ConsumeDebeziumEvents()
+		}()
+		// We don't wait for wg.Wait() so the SQS processing can continue
+	} else {
+		log.Println("Kafka URL or topic not configured, skipping Kafka consumer setup")
+	}
+
 	for {
 		log.Println("Starting main loop iteration")
 
-		// We only need the token if we have a message to process.
-		// Use separate variables for ON_SALE and CLOSED to avoid accidental reuse.
-
-		// Check ON_SALE queue
-		rawOnSaleMessage, err := sqsutil.ReceiveMessage(sqsClient, cfg.SQSONSaleQueueURL)
+		// Check the consolidated scheduling queue for messages (batch)
+		rawMessages, err := sqsutil.ReceiveMessage(sqsClient, cfg.SQSSessionSchedulingQueueURL)
 		if err != nil {
-			log.Printf("Error receiving message from ON_SALE SQS queue: %v", err)
-			time.Sleep(5 * time.Second) // Wait before retrying
-			continue
-		}
-
-		if rawOnSaleMessage != nil {
-			// Unmarshal the body here
-			var onSaleBody models.SQSMessageBody
-			if err := json.Unmarshal([]byte(*rawOnSaleMessage.Body), &onSaleBody); err != nil {
-				log.Printf("Error unmarshalling ON_SALE message body, deleting malformed message: %v", err)
-				// This is a "poison pill" message, delete it so it doesn't block the queue
-				sqsutil.DeleteMessage(cfg.SQSONSaleQueueURL, sqsClient, rawOnSaleMessage.ReceiptHandle)
-				continue
-			}
-
-			log.Printf("Received SQS message from ON_SALE queue: %+v", onSaleBody)
-
-			// Get token only when we need it
-			onSaleToken, err := auth.GetM2MToken(cfg, httpClient)
-			if err != nil {
-				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-
-			// Process the message
-			err = session.ProcessSessionMessage(cfg, httpClient, onSaleToken, &onSaleBody)
-			if err != nil {
-				log.Printf("Error processing ON_SALE message for session %s, will retry: %v", onSaleBody.SessionID, err)
-			} else {
-				// SUCCESS! Now we can safely delete the message.
-				log.Printf("Successfully processed ON_SALE message, deleting from queue.")
-				sqsutil.DeleteMessage(cfg.SQSONSaleQueueURL, sqsClient, rawOnSaleMessage.ReceiptHandle)
-			}
-			continue // Process one message at a time
-		}
-
-		// Check CLOSED queue (apply the same logic)
-		rawClosedMessage, err := sqsutil.ReceiveMessage(sqsClient, cfg.SQSSClosedQueueURL)
-		if err != nil {
-			log.Printf("Error receiving message from CLOSED SQS queue: %v", err)
+			log.Printf("Error receiving messages from scheduling SQS queue: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		if rawClosedMessage != nil {
-			var closedBody models.SQSMessageBody
-			if err := json.Unmarshal([]byte(*rawClosedMessage.Body), &closedBody); err != nil {
-				log.Printf("Error unmarshalling CLOSED message body, deleting malformed message: %v", err)
-				sqsutil.DeleteMessage(cfg.SQSSClosedQueueURL, sqsClient, rawClosedMessage.ReceiptHandle)
-				continue
-			}
-
-			log.Printf("Received SQS message from CLOSED queue: %+v", closedBody)
-
-			closedToken, err := auth.GetM2MToken(cfg, httpClient)
-			if err != nil {
-				log.Printf("Error getting M2M token: %v. Retrying in 30 seconds.", err)
-				time.Sleep(30 * time.Second)
-				continue
-			}
-
-			err = session.ProcessSessionMessage(cfg, httpClient, closedToken, &closedBody)
-			if err != nil {
-				log.Printf("Error processing CLOSED message for session %s, will retry: %v", closedBody.SessionID, err)
-			} else {
-				log.Printf("Successfully processed CLOSED message, deleting from queue.")
-				sqsutil.DeleteMessage(cfg.SQSSClosedQueueURL, sqsClient, rawClosedMessage.ReceiptHandle)
-			}
-			continue
+		if len(rawMessages) == 0 {
+			log.Println("No messages received from scheduling queue, continuing loop.")
+			continue // No need to sleep, long polling already waited
 		}
 
-		log.Println("No messages received from either queue, sleeping for a moment.")
-		time.Sleep(1 * time.Second) // Small sleep to prevent a tight loop when idle
+		log.Printf("Received %d messages from scheduling queue.", len(rawMessages))
+		var messagesToDelete []types.DeleteMessageBatchRequestEntry
+		var token string
+		var tokenErr error
+
+		// Process each message in the batch
+		for _, rawMessage := range rawMessages {
+			// Unmarshal and process each message individually
+			var messageBody models.SQSMessageBody
+			if err := json.Unmarshal([]byte(*rawMessage.Body), &messageBody); err != nil {
+				log.Printf("Error unmarshalling message body, will delete malformed message: %v", err)
+				// Add malformed message to the delete batch
+				messagesToDelete = append(messagesToDelete, types.DeleteMessageBatchRequestEntry{
+					Id:            rawMessage.MessageId,
+					ReceiptHandle: rawMessage.ReceiptHandle,
+				})
+				continue
+			}
+
+			log.Printf("Processing SQS message from scheduling queue: %+v", messageBody)
+
+			// Get token only once for the batch, if needed
+			if token == "" {
+				token, tokenErr = auth.GetM2MToken(cfg, httpClient)
+				if tokenErr != nil {
+					log.Printf("Error getting M2M token: %v. Will retry later.", tokenErr)
+					break // Skip processing the rest of the messages if we can't get a token
+				}
+			}
+
+			// Process the message based on its action
+			err = session.ProcessSessionMessage(cfg, httpClient, token, &messageBody)
+			if err != nil {
+				log.Printf("Error processing %s message for session %s, it will be retried: %v",
+					messageBody.Action, messageBody.SessionID, err)
+				// If processing fails, DO NOT add it to the delete batch.
+				// It will become visible again on the queue for another attempt.
+			} else {
+				log.Printf("Successfully processed %s message, adding to delete batch.", messageBody.Action)
+				// On success, add the message to our list of messages to delete.
+				messagesToDelete = append(messagesToDelete, types.DeleteMessageBatchRequestEntry{
+					Id:            rawMessage.MessageId,
+					ReceiptHandle: rawMessage.ReceiptHandle,
+				})
+			}
+		}
+
+		// After processing the whole batch, delete the successful ones in a single API call
+		if len(messagesToDelete) > 0 {
+			err := sqsutil.DeleteMessageBatch(cfg.SQSSessionSchedulingQueueURL, sqsClient, messagesToDelete)
+			if err != nil {
+				log.Printf("Error batch deleting messages: %v", err)
+			}
+		}
 	}
 }

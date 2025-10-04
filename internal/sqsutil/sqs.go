@@ -5,25 +5,23 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-func ReceiveMessage(sqsClient *sqs.Client, queueURL string) (*types.Message, error) {
+func ReceiveMessage(sqsClient *sqs.Client, queueURL string) ([]types.Message, error) {
 	result, err := sqsClient.ReceiveMessage(context.TODO(), &sqs.ReceiveMessageInput{
 		QueueUrl:            &queueURL,
-		MaxNumberOfMessages: 1,
+		MaxNumberOfMessages: 10,
 		WaitTimeSeconds:     20,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive message, %v", err)
 	}
 
-	if len(result.Messages) == 0 {
-		return nil, nil // No message received, this is normal
-	}
-
-	return &result.Messages[0], nil
+	// The result is already a slice, so we can return it directly
+	return result.Messages, nil
 }
 
 func DeleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
@@ -37,4 +35,31 @@ func DeleteMessage(queueURL string, client *sqs.Client, receiptHandle *string) {
 	} else {
 		log.Printf("Message deleted from SQS queue %s successfully", queueURL)
 	}
+}
+
+func DeleteMessageBatch(queueURL string, client *sqs.Client, entries []types.DeleteMessageBatchRequestEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	log.Printf("Deleting %d messages in a batch from SQS queue %s", len(entries), queueURL)
+	result, err := client.DeleteMessageBatch(context.TODO(), &sqs.DeleteMessageBatchInput{
+		QueueUrl: aws.String(queueURL),
+		Entries:  entries,
+	})
+
+	if err != nil {
+		return fmt.Errorf("batch delete failed: %v", err)
+	}
+
+	if len(result.Failed) > 0 {
+		log.Printf("Warning: %d messages failed to delete in batch operation", len(result.Failed))
+		for _, failure := range result.Failed {
+			log.Printf("Delete failure - ID: %s, Code: %s, Message: %s",
+				*failure.Id, *failure.Code, *failure.Message)
+		}
+	}
+
+	log.Printf("Successfully deleted %d messages in batch", len(result.Successful))
+	return nil
 }
