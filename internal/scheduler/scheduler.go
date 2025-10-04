@@ -123,6 +123,5 @@ func (s *Service) DeleteSchedule(sessionID, namePrefix string) {
 
 // MicrosecondsToTime converts a Debezium microsecond timestamp to a Go time.Time object.
 func MicrosecondsToTime(microseconds int64) time.Time {
-	// Convert microseconds to nanoseconds for time.Unix
 	return time.Unix(0, microseconds*1000)
 }
