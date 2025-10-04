@@ -49,9 +49,9 @@ func main() {
 	schedulerService := scheduler.NewService(cfg, schedulerClient)
 
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
-	if cfg.KafkaURL != "" && cfg.KafkaTopic != "" {
-		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.KafkaTopic, cfg.KafkaURL)
-		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.KafkaTopic, schedulerService)
+	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
+		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.EventSessionsKafkaTopic, cfg.KafkaURL)
+		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService)
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {

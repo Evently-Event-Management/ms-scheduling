@@ -17,7 +17,7 @@ type Config struct {
 	ClientID                     string
 	ClientSecret                 string
 	KafkaURL                     string
-	KafkaTopic                   string
+	EventSessionsKafkaTopic      string
 	SQSSessionSchedulingQueueURL string
 	SQSSessionSchedulingQueueARN string
 	SchedulerRoleARN             string
@@ -59,7 +59,7 @@ func Load() Config {
 		ClientID:                     getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
 		ClientSecret:                 getEnv("SCHEDULER_CLIENT_SECRET", ""),
 		KafkaURL:                     getEnv("KAFKA_URL", "localhost:9092"),
-		KafkaTopic:                   getEnv("KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
+		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		SQSSessionSchedulingQueueURL: getEnv("AWS_SQS_SESSION_SCHEDULING_URL", ""),
 		SQSSessionSchedulingQueueARN: getEnv("AWS_SQS_SESSION_SCHEDULING_ARN", ""),
 		SchedulerRoleARN:             getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
