@@ -124,6 +124,11 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 			return
 		}
 
+		if after.Status == "CANCELLED" {
+			log.Printf("Session %s was cancelled. No further scheduling actions will be taken.", after.ID)
+			return
+		}
+
 		// Check if on-sale time changed
 		if after.SalesStartTime != before.SalesStartTime {
 			onSaleTime := scheduler.MicrosecondsToTime(after.SalesStartTime)
