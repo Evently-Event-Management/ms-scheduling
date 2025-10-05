@@ -140,10 +140,10 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				log.Printf("Error updating on-sale job for session %s: %v", after.ID, err)
 			}
 		}
-		// Check if end time changed
-		if after.EndTime != before.EndTime {
-			closedTime := scheduler.MicrosecondsToTime(after.EndTime)
-			log.Printf("End time for session %s changed. Updating schedule.", after.ID)
+		// Check if start time changed
+		if after.StartTime != before.StartTime {
+			closedTime := scheduler.MicrosecondsToTime(after.StartTime)
+			log.Printf("Start time for session %s changed. Updating schedule.", after.ID)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
 				closedTime,
