@@ -18,6 +18,7 @@ import (
 	"ms-scheduling/internal/kafka"
 	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/scheduler"
+	"ms-scheduling/internal/services"
 	"ms-scheduling/internal/session"
 	"ms-scheduling/internal/sqsutil"
 )
@@ -48,10 +49,39 @@ func main() {
 	// Initialize the scheduler service
 	schedulerService := scheduler.NewService(cfg, schedulerClient)
 
+	// Initialize database service
+	dbConfig := services.DatabaseConfig{
+		Host:     cfg.DatabaseHost,
+		Port:     cfg.DatabasePort,
+		User:     cfg.DatabaseUser,
+		Password: cfg.DatabasePassword,
+		DBName:   cfg.DatabaseName,
+		SSLMode:  cfg.DatabaseSSLMode,
+	}
+	dbService, err := services.NewDatabaseService(dbConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize database service: %v", err)
+	}
+	defer dbService.Close()
+
+	// Initialize database tables
+	if err := dbService.InitializeTables(); err != nil {
+		log.Fatalf("Failed to initialize database tables: %v", err)
+	}
+
+	// Initialize Keycloak client
+	keycloakClient := services.NewKeycloakClient(cfg.KeycloakURL, cfg.KeycloakRealm, cfg.ClientID, cfg.ClientSecret)
+
+	// Initialize email service
+	emailService := services.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.FromEmail, cfg.FromName)
+
+	// Initialize subscriber service
+	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService)
+
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
 	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
 		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.EventSessionsKafkaTopic, cfg.KafkaURL)
-		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService)
+		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService, subscriberService)
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {

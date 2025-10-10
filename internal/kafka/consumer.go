@@ -7,6 +7,8 @@ import (
 	"log"
 	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/scheduler"
+	"ms-scheduling/internal/services"
+	"strconv"
 
 	"github.com/segmentio/kafka-go"
 
@@ -15,22 +17,24 @@ import (
 
 // Consumer holds the dependencies for the Kafka consumer.
 type Consumer struct {
-	Reader           *kafka.Reader
-	SchedulerService *scheduler.Service
-	Config           appconfig.Config
+	Reader            *kafka.Reader
+	SchedulerService  *scheduler.Service
+	SubscriberService *services.SubscriberService
+	Config            appconfig.Config
 }
 
 // NewConsumer creates a new Kafka consumer with the given configuration.
-func NewConsumer(cfg appconfig.Config, kafkaURL, topic string, schedulerService *scheduler.Service) *Consumer {
+func NewConsumer(cfg appconfig.Config, kafkaURL, topic string, schedulerService *scheduler.Service, subscriberService *services.SubscriberService) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaURL},
 		Topic:   topic,
 		GroupID: "scheduler-service-group",
 	})
 	return &Consumer{
-		Reader:           reader,
-		SchedulerService: schedulerService,
-		Config:           cfg,
+		Reader:            reader,
+		SchedulerService:  schedulerService,
+		SubscriberService: subscriberService,
+		Config:            cfg,
 	}
 }
 
@@ -45,6 +49,12 @@ func (c *Consumer) ConsumeDebeziumEvents() {
 
 		log.Printf("Received Kafka message from topic %s", msg.Topic)
 
+		// Handle order created events
+		if msg.Topic == "ticketly.order.created" {
+			c.processOrderCreated(msg.Value)
+			continue
+		}
+
 		var event models.DebeziumEvent
 		if err := json.Unmarshal(msg.Value, &event); err != nil {
 			log.Printf("Error unmarshalling Debezium event: %v", err)
@@ -53,6 +63,69 @@ func (c *Consumer) ConsumeDebeziumEvents() {
 
 		c.processSessionChange(event)
 	}
+}
+
+// OrderCreatedEvent represents the structure of the order.created Kafka event
+type OrderCreatedEvent struct {
+	OrderID        string  `json:"OrderID"`
+	UserID         string  `json:"UserID"`
+	EventID        string  `json:"EventID"`
+	SessionID      string  `json:"SessionID"`
+	Status         string  `json:"Status"`
+	SubTotal       float64 `json:"SubTotal"`
+	DiscountID     string  `json:"DiscountID"`
+	DiscountCode   string  `json:"DiscountCode"`
+	DiscountAmount float64 `json:"DiscountAmount"`
+	Price          float64 `json:"Price"`
+	CreatedAt      string  `json:"CreatedAt"`
+	PaymentAT      string  `json:"PaymentAT"`
+	Tickets        []struct {
+		TicketID        string  `json:"ticket_id"`
+		OrderID         string  `json:"order_id"`
+		SeatID          string  `json:"seat_id"`
+		SeatLabel       string  `json:"seat_label"`
+		Colour          string  `json:"colour"`
+		TierID          string  `json:"tier_id"`
+		TierName        string  `json:"tier_name"`
+		PriceAtPurchase float64 `json:"price_at_purchase"`
+		IssuedAt        string  `json:"issued_at"`
+		CheckedIn       bool    `json:"checked_in"`
+		CheckedInTime   string  `json:"checked_in_time"`
+	} `json:"tickets"`
+}
+
+// processOrderCreated handles ticketly.order.created events
+func (c *Consumer) processOrderCreated(value []byte) {
+	var order services.OrderCreatedEvent
+	if err := json.Unmarshal(value, &order); err != nil {
+		log.Printf("Error unmarshalling order.created event: %v", err)
+		return
+	}
+	log.Printf("Processing order.created for OrderID=%s UserID=%s", order.OrderID, order.UserID)
+
+	// Get or create subscriber
+	subscriber, err := c.SubscriberService.GetOrCreateSubscriber(order.UserID)
+	if err != nil {
+		log.Printf("Error getting/creating subscriber for user %s: %v", order.UserID, err)
+		return
+	}
+
+	// Add subscription to the event and session
+	if eventID, err := strconv.Atoi(order.EventID); err == nil {
+		c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, eventID)
+	}
+	if sessionID, err := strconv.Atoi(order.SessionID); err == nil {
+		c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, sessionID)
+	}
+
+	// Send order confirmation email
+	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
+		log.Printf("Error sending order confirmation email: %v", err)
+		return
+	}
+
+	log.Printf("Successfully processed order %s for user %s (email: %s)",
+		order.OrderID, order.UserID, subscriber.SubscriberMail)
 }
 
 // processSessionChange is the main router for Debezium operations.

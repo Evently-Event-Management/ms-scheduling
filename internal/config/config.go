@@ -22,6 +22,22 @@ type Config struct {
 	SQSSessionSchedulingQueueARN string
 	SchedulerRoleARN             string
 	SchedulerGroupName           string
+
+	// Database configuration
+	DatabaseHost     string
+	DatabasePort     string
+	DatabaseName     string
+	DatabaseUser     string
+	DatabasePassword string
+	DatabaseSSLMode  string
+
+	// Email configuration
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	FromEmail    string
+	FromName     string
 }
 
 // LoadEnv loads environment variables from .env files
@@ -64,6 +80,22 @@ func Load() Config {
 		SQSSessionSchedulingQueueARN: getEnv("AWS_SQS_SESSION_SCHEDULING_ARN", ""),
 		SchedulerRoleARN:             getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
+
+		// Database configuration
+		DatabaseHost:     getEnv("DATABASE_HOST", "localhost"),
+		DatabasePort:     getEnv("DATABASE_PORT", "5432"),
+		DatabaseName:     getEnv("DATABASE_NAME", "ticketly"),
+		DatabaseUser:     getEnv("DATABASE_USER", "postgres"),
+		DatabasePassword: getEnv("DATABASE_PASSWORD", ""),
+		DatabaseSSLMode:  getEnv("DATABASE_SSL_MODE", "disable"),
+
+		// Email configuration
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUsername: getEnv("SMTP_USERNAME", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		FromEmail:    getEnv("FROM_EMAIL", "noreply@ticketly.com"),
+		FromName:     getEnv("FROM_NAME", "Ticketly"),
 	}
 }
 

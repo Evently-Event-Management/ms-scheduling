@@ -92,3 +92,5 @@ func MicroTimestampToTime(microTs int64) time.Time {
 func TimeToMicroTimestamp(t time.Time) int64 {
 	return t.Unix()*1000000 + int64(t.Nanosecond())/1000
 }
+
+// Note: Subscription models are defined in subscription.go
