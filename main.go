@@ -21,6 +21,7 @@ import (
 	"ms-scheduling/internal/scheduler"
 	"ms-scheduling/internal/session"
 	"ms-scheduling/internal/sqsutil"
+	"ms-scheduling/internal/trending"
 )
 
 // Types moved to internal packages.
@@ -72,6 +73,24 @@ func main() {
 		// We don't wait for wg.Wait() so the SQS processing can continue
 	} else {
 		log.Println("Kafka URL or topic not configured, skipping Kafka consumer setup")
+	}
+
+	// Start trending job processor in a separate goroutine if trending queue URL is configured
+	if cfg.SQSTrendingQueueURL != "" {
+		log.Printf("Starting trending job processor for queue: %s", cfg.SQSTrendingQueueURL)
+		trendingProcessor := trending.NewProcessor(sqsClient, httpClient, cfg)
+		var trendingWg sync.WaitGroup
+		trendingWg.Add(1)
+		go func() {
+			defer trendingWg.Done()
+			err := trendingProcessor.ProcessMessages(context.Background())
+			if err != nil {
+				log.Printf("Error processing trending messages: %v", err)
+			}
+		}()
+		// We don't wait for trendingWg.Wait() so other processing can continue
+	} else {
+		log.Println("Trending queue URL not configured, skipping trending processor setup")
 	}
 
 	for {
