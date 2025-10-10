@@ -12,6 +12,7 @@ type Config struct {
 	AWSRegion                    string
 	AWSEndpoint                  string
 	EventServiceURL              string
+	EventQueryServiceURL         string
 	KeycloakURL                  string
 	KeycloakRealm                string
 	ClientID                     string
@@ -20,6 +21,8 @@ type Config struct {
 	EventSessionsKafkaTopic      string
 	SQSSessionSchedulingQueueURL string
 	SQSSessionSchedulingQueueARN string
+	SQSTrendingQueueURL          string
+	SQSTrendingQueueARN          string
 	SchedulerRoleARN             string
 	SchedulerGroupName           string
 }
@@ -54,6 +57,7 @@ func Load() Config {
 		AWSRegion:                    getEnv("AWS_REGION", "ap-south-1"),
 		AWSEndpoint:                  getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
 		EventServiceURL:              getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
+		EventQueryServiceURL:         getEnv("EVENT_QUERY_SERVICE_URL", "http://localhost:8082/api/event-query"),
 		KeycloakURL:                  getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
 		KeycloakRealm:                getEnv("KEYCLOAK_REALM", "event-ticketing"),
 		ClientID:                     getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
@@ -62,6 +66,8 @@ func Load() Config {
 		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		SQSSessionSchedulingQueueURL: getEnv("AWS_SQS_SESSION_SCHEDULING_URL", ""),
 		SQSSessionSchedulingQueueARN: getEnv("AWS_SQS_SESSION_SCHEDULING_ARN", ""),
+		SQSTrendingQueueURL:          getEnv("AWS_SQS_TRENDING_JOB_URL", ""),
+		SQSTrendingQueueARN:          getEnv("AWS_SQS_TRENDING_JOB_ARN", ""),
 		SchedulerRoleARN:             getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
 	}

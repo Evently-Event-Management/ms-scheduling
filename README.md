@@ -12,6 +12,7 @@ Refactored for maintainability by splitting monolithic `main.go` into internal p
 - `internal/session` – business logic for processing session state changes.
 - `internal/kafka` – Kafka consumer for processing Debezium events.
 - `internal/scheduler` – AWS EventBridge scheduler operations for event scheduling.
+- `internal/trending` – Trending job processor for calculating trending events.
 
 ## Build & Run
 
@@ -67,6 +68,8 @@ The application uses environment variables for configuration. You can set these 
 ```
 AWS_SQS_SESSION_SCHEDULING_URL=<SQS queue URL for all session scheduling events>
 AWS_SQS_SESSION_SCHEDULING_ARN=<SQS queue ARN for all session scheduling events>
+AWS_SQS_TRENDING_JOB_URL=<SQS queue URL for trending job events>
+AWS_SQS_TRENDING_JOB_ARN=<SQS queue ARN for trending job events>
 AWS_SCHEDULER_ROLE_ARN=<IAM role ARN for EventBridge Scheduler to access SQS>
 AWS_SCHEDULER_GROUP_NAME=<EventBridge Scheduler group name>
 SCHEDULER_CLIENT_SECRET=<Client secret for authentication>
@@ -78,6 +81,7 @@ AWS_REGION=<AWS region, default: ap-south-1>
 ```
 AWS_LOCAL_ENDPOINT_URL=<URL for local AWS endpoint, used for development>
 EVENT_SERVICE_URL=<URL for event service, default: http://localhost:8081/api/event-seating>
+EVENT_QUERY_SERVICE_URL=<URL for event query service, default: http://localhost:8082/api/events-query>
 KEYCLOAK_URL=<URL for Keycloak, default: http://auth.ticketly.com:8080>
 KEYCLOAK_REALM=<Keycloak realm, default: event-ticketing>
 KEYCLOAK_CLIENT_ID=<Keycloak client ID, default: scheduler-service-client>
@@ -94,6 +98,7 @@ The service integrates with Keycloak for authentication and user information ret
 1. **M2M (Machine-to-Machine) Authentication**
    - Uses client credentials grant flow to obtain access tokens
    - Required for accessing protected endpoints and Keycloak Admin APIs
+   - Used to authenticate requests to the Event Query Service for trending calculations
 
 2. **User Information Retrieval**
    - `GetUserEmailByID(cfg, client, userID)` - Retrieves a user's email address by their Keycloak user ID
@@ -136,6 +141,21 @@ resource "keycloak_openid_client_service_account_role" "service_view_users" {
   role                    = "view-users"
 }
 ```
+
+## Features
+
+### Event Session Scheduling
+The service handles event session scheduling through SQS messages and EventBridge Scheduler.
+
+### User Information Retrieval
+The service can retrieve user information from Keycloak, such as email addresses by user ID.
+
+### Trending Events Calculation
+The service processes messages from the trending job SQS queue and calls the Event Query Service to calculate trending events.
+
+- **Queue Processing**: Consumes messages from the trending SQS queue
+- **Authentication**: Uses M2M token to authenticate with the Event Query Service
+- **API Integration**: Makes POST requests to `/internal/v1/trending/calculate-all` endpoint
 
 ## Notes
 - Internal packages keep implementation details hidden from external consumers.
