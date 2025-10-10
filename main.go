@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"log"
 	"net/http"
 	"sync"
@@ -21,17 +22,28 @@ import (
 	"ms-scheduling/internal/services"
 	"ms-scheduling/internal/session"
 	"ms-scheduling/internal/sqsutil"
+	"ms-scheduling/internal/trending"
 )
 
 // Types moved to internal packages.
 
 // Main application loop
 func main() {
+	// Parse command line flags
+	testUserID := flag.String("test-user", "", "Test getting email for a specific user ID")
+	flag.Parse()
+
 	cfg := appconfig.Load()
 	log.Printf("Loaded config: %+v", cfg)
 
 	// Create clients once, outside the loop
 	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	// If a user ID is provided, test the GetUserEmailByID function
+	if *testUserID != "" {
+		testGetUserEmail(cfg, httpClient, *testUserID)
+		return
+	}
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(cfg.AWSRegion))
 	if err != nil {
 		log.Fatalf("unable to load AWS SDK config, %v", err)
@@ -91,6 +103,24 @@ func main() {
 		// We don't wait for wg.Wait() so the SQS processing can continue
 	} else {
 		log.Println("Kafka URL or topic not configured, skipping Kafka consumer setup")
+	}
+
+	// Start trending job processor in a separate goroutine if trending queue URL is configured
+	if cfg.SQSTrendingQueueURL != "" {
+		log.Printf("Starting trending job processor for queue: %s", cfg.SQSTrendingQueueURL)
+		trendingProcessor := trending.NewProcessor(sqsClient, httpClient, cfg)
+		var trendingWg sync.WaitGroup
+		trendingWg.Add(1)
+		go func() {
+			defer trendingWg.Done()
+			err := trendingProcessor.ProcessMessages(context.Background())
+			if err != nil {
+				log.Printf("Error processing trending messages: %v", err)
+			}
+		}()
+		// We don't wait for trendingWg.Wait() so other processing can continue
+	} else {
+		log.Println("Trending queue URL not configured, skipping trending processor setup")
 	}
 
 	for {
@@ -164,4 +194,17 @@ func main() {
 			}
 		}
 	}
+}
+
+// testGetUserEmail tests the GetUserEmailByID function with the provided user ID
+func testGetUserEmail(cfg appconfig.Config, httpClient *http.Client, userID string) {
+	log.Printf("Testing GetUserEmailByID with user ID: %s", userID)
+
+	email, err := auth.GetUserEmailByID(cfg, httpClient, userID)
+	if err != nil {
+		log.Printf("Error getting email for user %s: %v", userID, err)
+		return
+	}
+
+	log.Printf("Successfully retrieved email for user %s: %s", userID, email)
 }
