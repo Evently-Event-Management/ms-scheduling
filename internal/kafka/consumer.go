@@ -8,7 +8,6 @@ import (
 	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/services"
-	"strconv"
 
 	"github.com/segmentio/kafka-go"
 
@@ -129,12 +128,8 @@ func (c *Consumer) processOrderCreated(value []byte) {
 	}
 
 	// Add subscription to the event and session
-	if eventID, err := strconv.Atoi(order.EventID); err == nil {
-		c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, eventID)
-	}
-	if sessionID, err := strconv.Atoi(order.SessionID); err == nil {
-		c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, sessionID)
-	}
+	c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID)
+	c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID)
 
 	// Send order confirmation email
 	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"ms-scheduling/internal/models"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -100,14 +99,14 @@ func (s *SubscriberService) createSubscriber(userID string, email string) (*mode
 }
 
 // AddSubscription adds a subscription for a subscriber
-func (s *SubscriberService) AddSubscription(subscriberID int, category models.SubscriptionCategory, targetID int) error {
+func (s *SubscriberService) AddSubscription(subscriberID int, category models.SubscriptionCategory, targetUUID string) error {
 	query := `
-		INSERT INTO subscriptions (subscriber_id, category, target_id) 
+		INSERT INTO subscriptions (subscriber_id, category, target_uuid) 
 		VALUES ($1, $2, $3) 
-		ON CONFLICT (subscriber_id, category, target_id) DO NOTHING
+		ON CONFLICT (subscriber_id, category, COALESCE(target_uuid, ''), COALESCE(target_id, 0)) DO NOTHING
 	`
 
-	_, err := s.DB.Exec(query, subscriberID, category, targetID)
+	_, err := s.DB.Exec(query, subscriberID, category, targetUUID)
 	return err
 }
 
@@ -194,12 +193,12 @@ type Ticket struct {
 }
 
 // GetSessionSubscribers retrieves all subscribers for a specific session
-func (s *SubscriberService) GetSessionSubscribers(sessionID int) ([]models.Subscriber, error) {
+func (s *SubscriberService) GetSessionSubscribers(sessionID string) ([]models.Subscriber, error) {
 	query := `
 		SELECT DISTINCT s.subscriber_id, s.subscriber_mail, s.user_id, s.created_at
 		FROM subscribers s
 		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
-		WHERE sub.category = 'session' AND sub.target_id = $1`
+		WHERE sub.category = 'session' AND sub.target_uuid = $1`
 
 	rows, err := s.DB.Query(query, sessionID)
 	if err != nil {
@@ -246,27 +245,20 @@ func (s *SubscriberService) ProcessSessionUpdate(sessionUpdate *models.DebeziumS
 		return nil
 	}
 
-	var sessionID int
-	var err error
+	var sessionID string
 
 	// Get session ID from appropriate data based on operation
 	if sessionUpdate.Payload.Operation == "d" {
 		// For delete operations, get session ID from before data
 		if sessionUpdate.Payload.Before != nil {
-			sessionID, err = strconv.Atoi(sessionUpdate.Payload.Before.ID)
-			if err != nil {
-				return fmt.Errorf("error parsing session ID from before data: %w", err)
-			}
+			sessionID = sessionUpdate.Payload.Before.ID
 		} else {
 			return fmt.Errorf("no before data available for session deletion")
 		}
 	} else {
 		// For create/update operations, get session ID from after data
 		if sessionUpdate.Payload.After != nil {
-			sessionID, err = strconv.Atoi(sessionUpdate.Payload.After.ID)
-			if err != nil {
-				return fmt.Errorf("error parsing session ID from after data: %w", err)
-			}
+			sessionID = sessionUpdate.Payload.After.ID
 		} else {
 			return fmt.Errorf("no after data available for session update")
 		}
@@ -279,7 +271,7 @@ func (s *SubscriberService) ProcessSessionUpdate(sessionUpdate *models.DebeziumS
 	}
 
 	if len(subscribers) == 0 {
-		log.Printf("No subscribers found for session ID: %d", sessionID)
+		log.Printf("No subscribers found for session ID: %s", sessionID)
 		return nil
 	}
 
@@ -353,42 +345,16 @@ func (s *SubscriberService) ProcessEventUpdate(eventUpdate *models.DebeziumEvent
 
 // GetEventSubscribers retrieves all subscribers for a specific event
 func (s *SubscriberService) GetEventSubscribers(eventID string) ([]models.Subscriber, error) {
-	// For this demo, we'll try to match with both string UUID and integer target_id
-	// First try as UUID (string), then as integer if it can be converted
 	query := `
 		SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
 		FROM subscribers s
 		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
-		WHERE sub.category = 'event' AND (sub.target_uuid = $1 OR sub.target_id = $2)
+		WHERE sub.category = 'event' AND sub.target_uuid = $1
 	`
 
-	// Try to convert eventID to integer for backward compatibility
-	var eventIDInt interface{}
-	if intVal, err := strconv.Atoi(eventID); err == nil {
-		eventIDInt = intVal
-	} else {
-		eventIDInt = nil
-	}
-
-	rows, err := s.DB.Query(query, eventID, eventIDInt)
+	rows, err := s.DB.Query(query, eventID)
 	if err != nil {
-		// If target_uuid column doesn't exist, fall back to just integer matching
-		fallbackQuery := `
-			SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
-			FROM subscribers s
-			JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
-			WHERE sub.category = 'event' AND sub.target_id = $1
-		`
-
-		if eventIDInt != nil {
-			rows, err = s.DB.Query(fallbackQuery, eventIDInt)
-			if err != nil {
-				return nil, fmt.Errorf("error querying event subscribers: %w", err)
-			}
-		} else {
-			// Return empty if we can't convert to int and UUID column doesn't exist
-			return []models.Subscriber{}, nil
-		}
+		return nil, fmt.Errorf("error querying event subscribers: %w", err)
 	}
 	defer rows.Close()
 
@@ -683,36 +649,12 @@ func (s *SubscriberService) GetOrganizationSubscribers(organizationID string) ([
 		SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
 		FROM subscribers s
 		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
-		WHERE sub.category = 'organization' AND (sub.target_uuid = $1 OR sub.target_id = $2)
+		WHERE sub.category = 'organization' AND sub.target_uuid = $1
 	`
 
-	// Try to convert organizationID to integer for backward compatibility
-	var organizationIDInt interface{}
-	if intVal, err := strconv.Atoi(organizationID); err == nil {
-		organizationIDInt = intVal
-	} else {
-		organizationIDInt = nil
-	}
-
-	rows, err := s.DB.Query(query, organizationID, organizationIDInt)
+	rows, err := s.DB.Query(query, organizationID)
 	if err != nil {
-		// If target_uuid column doesn't exist, fall back to just integer matching
-		fallbackQuery := `
-			SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
-			FROM subscribers s
-			JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
-			WHERE sub.category = 'organization' AND sub.target_id = $1
-		`
-
-		if organizationIDInt != nil {
-			rows, err = s.DB.Query(fallbackQuery, organizationIDInt)
-			if err != nil {
-				return nil, fmt.Errorf("error querying organization subscribers: %w", err)
-			}
-		} else {
-			// Return empty if we can't convert to int and UUID column doesn't exist
-			return []models.Subscriber{}, nil
-		}
+		return nil, fmt.Errorf("error querying organization subscribers: %w", err)
 	}
 	defer rows.Close()
 
@@ -847,14 +789,8 @@ func (s *SubscriberService) buildEventCreationEmail(subscriber models.Subscriber
 func (s *SubscriberService) ProcessSessionReminder(sessionID string) error {
 	log.Printf("Processing session reminder email for session ID: %s", sessionID)
 
-	// Convert sessionID to int for GetSessionSubscribers
-	sessionIDInt, err := strconv.Atoi(sessionID)
-	if err != nil {
-		return fmt.Errorf("invalid session ID format: %w", err)
-	}
-
 	// Get all subscribers for this session
-	sessionSubscribers, err := s.GetSessionSubscribers(sessionIDInt)
+	sessionSubscribers, err := s.GetSessionSubscribers(sessionID)
 	if err != nil {
 		return fmt.Errorf("error getting session subscribers: %w", err)
 	}
@@ -1050,7 +986,7 @@ func (s *SubscriberService) buildSessionReminderEmail(subscriber models.Subscrib
 		body.WriteString(fmt.Sprintf("• Venue Details: %s\n", sessionInfo.VenueDetails))
 	}
 
-	body.WriteString(fmt.Sprintf("\n⏰ The session starts in approximately 24 hours!\n"))
+	body.WriteString("\n⏰ The session starts in approximately 24 hours!\n")
 
 	if sessionInfo.Status == "ON_SALE" {
 		body.WriteString("\n🎫 Don't forget - this session is currently on sale. Make sure you have your tickets ready!\n")
