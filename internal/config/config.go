@@ -21,23 +21,10 @@ type Config struct {
 	EventSessionsKafkaTopic      string
 	SQSSessionSchedulingQueueURL string
 	SQSSessionSchedulingQueueARN string
-	SQSSessionRemindersQueueURL  string
-	SQSSessionRemindersQueueARN  string
 	SQSTrendingQueueURL          string
 	SQSTrendingQueueARN          string
 	SchedulerRoleARN             string
 	SchedulerGroupName           string
-
-	// Database configuration
-	PostgresDSN string
-
-	// Email configuration
-	SMTPHost     string
-	SMTPPort     string
-	SMTPUsername string
-	SMTPPassword string
-	FromEmail    string
-	FromName     string
 }
 
 // LoadEnv loads environment variables from .env files
@@ -79,23 +66,10 @@ func Load() Config {
 		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		SQSSessionSchedulingQueueURL: getEnv("AWS_SQS_SESSION_SCHEDULING_URL", ""),
 		SQSSessionSchedulingQueueARN: getEnv("AWS_SQS_SESSION_SCHEDULING_ARN", ""),
-		SQSSessionRemindersQueueURL:  getEnv("AWS_SQS_SESSION_REMINDERS_URL", ""),
-		SQSSessionRemindersQueueARN:  getEnv("AWS_SQS_SESSION_REMINDERS_ARN", ""),
 		SQSTrendingQueueURL:          getEnv("AWS_SQS_TRENDING_JOB_URL", ""),
 		SQSTrendingQueueARN:          getEnv("AWS_SQS_TRENDING_JOB_ARN", ""),
 		SchedulerRoleARN:             getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
-
-		// Database configuration
-		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost port=5432 user=postgres password= dbname=ticketly sslmode=disable"),
-
-		// Email configuration
-		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
-		SMTPPort:     getEnv("SMTP_PORT", "587"),
-		SMTPUsername: getEnv("SMTP_USERNAME", ""),
-		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
-		FromEmail:    getEnv("FROM_EMAIL", "noreply@ticketly.com"),
-		FromName:     getEnv("FROM_NAME", "Ticketly"),
 	}
 }
 

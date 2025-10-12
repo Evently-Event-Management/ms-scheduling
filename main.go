@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -11,14 +12,15 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsscheduler "github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
 	auth "ms-scheduling/internal/auth"
 	appconfig "ms-scheduling/internal/config"
-	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/kafka"
-	"ms-scheduling/internal/reminder"
+	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/scheduler"
-	"ms-scheduling/internal/services"
+	"ms-scheduling/internal/session"
+	"ms-scheduling/internal/sqsutil"
 	"ms-scheduling/internal/trending"
 )
 
@@ -56,33 +58,12 @@ func main() {
 	schedulerClient := awsscheduler.NewFromConfig(awsCfg)
 
 	// Initialize the scheduler service
-	schedulerService := eventbridge.NewService(cfg, schedulerClient)
-
-	// Initialize database service
-	dbService, err := services.NewDatabaseService(cfg.PostgresDSN)
-	if err != nil {
-		log.Fatalf("Failed to initialize database service: %v", err)
-	}
-	defer dbService.Close()
-
-	// Initialize database tables
-	if err := dbService.InitializeTables(); err != nil {
-		log.Fatalf("Failed to initialize database tables: %v", err)
-	}
-
-	// Initialize Keycloak client
-	keycloakClient := services.NewKeycloakClient(cfg.KeycloakURL, cfg.KeycloakRealm, cfg.ClientID, cfg.ClientSecret)
-
-	// Initialize email service
-	emailService := services.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.FromEmail, cfg.FromName)
-
-	// Initialize subscriber service
-	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService)
+	schedulerService := scheduler.NewService(cfg, schedulerClient)
 
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
 	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
 		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.EventSessionsKafkaTopic, cfg.KafkaURL)
-		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService, subscriberService)
+		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService)
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
@@ -112,45 +93,76 @@ func main() {
 		log.Println("Trending queue URL not configured, skipping trending processor setup")
 	}
 
-	// Start session scheduling processor in a separate goroutine if session scheduling queue URL is configured
-	if cfg.SQSSessionSchedulingQueueURL != "" {
-		log.Printf("Starting session scheduling processor for queue: %s", cfg.SQSSessionSchedulingQueueURL)
-		sessionProcessor := scheduler.NewProcessor(sqsClient, httpClient, cfg)
-		var sessionWg sync.WaitGroup
-		sessionWg.Add(1)
-		go func() {
-			defer sessionWg.Done()
-			err := sessionProcessor.ProcessMessages(context.Background())
-			if err != nil {
-				log.Printf("Error processing session scheduling messages: %v", err)
-			}
-		}()
-		// We don't wait for sessionWg.Wait() so other processing can continue
-	} else {
-		log.Println("Session scheduling queue URL not configured, skipping session processor setup")
-	}
-
-	// Start reminder processor in a separate goroutine if reminder queue URL is configured
-	if cfg.SQSSessionRemindersQueueURL != "" {
-		log.Printf("Starting reminder processor for queue: %s", cfg.SQSSessionRemindersQueueURL)
-		reminderProcessor := reminder.NewProcessor(sqsClient, httpClient, cfg, subscriberService)
-		var reminderWg sync.WaitGroup
-		reminderWg.Add(1)
-		go func() {
-			defer reminderWg.Done()
-			err := reminderProcessor.ProcessMessages(context.Background())
-			if err != nil {
-				log.Printf("Error processing reminder messages: %v", err)
-			}
-		}()
-		// We don't wait for reminderWg.Wait() so other processing can continue
-	} else {
-		log.Println("Reminder queue URL not configured, skipping reminder processor setup")
-	}
-
-	// Keep the main goroutine alive
 	for {
-		time.Sleep(time.Hour)
+		log.Println("Starting main loop iteration")
+
+		// Check the consolidated scheduling queue for messages (batch)
+		rawMessages, err := sqsutil.ReceiveMessage(sqsClient, cfg.SQSSessionSchedulingQueueURL)
+		if err != nil {
+			log.Printf("Error receiving messages from scheduling SQS queue: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if len(rawMessages) == 0 {
+			log.Println("No messages received from scheduling queue, continuing loop.")
+			continue // No need to sleep, long polling already waited
+		}
+
+		log.Printf("Received %d messages from scheduling queue.", len(rawMessages))
+		var messagesToDelete []types.DeleteMessageBatchRequestEntry
+		var token string
+		var tokenErr error
+
+		// Process each message in the batch
+		for _, rawMessage := range rawMessages {
+			// Unmarshal and process each message individually
+			var messageBody models.SQSMessageBody
+			if err := json.Unmarshal([]byte(*rawMessage.Body), &messageBody); err != nil {
+				log.Printf("Error unmarshalling message body, will delete malformed message: %v", err)
+				// Add malformed message to the delete batch
+				messagesToDelete = append(messagesToDelete, types.DeleteMessageBatchRequestEntry{
+					Id:            rawMessage.MessageId,
+					ReceiptHandle: rawMessage.ReceiptHandle,
+				})
+				continue
+			}
+
+			log.Printf("Processing SQS message from scheduling queue: %+v", messageBody)
+
+			// Get token only once for the batch, if needed
+			if token == "" {
+				token, tokenErr = auth.GetM2MToken(cfg, httpClient)
+				if tokenErr != nil {
+					log.Printf("Error getting M2M token: %v. Will retry later.", tokenErr)
+					break // Skip processing the rest of the messages if we can't get a token
+				}
+			}
+
+			// Process the message based on its action
+			err = session.ProcessSessionMessage(cfg, httpClient, token, &messageBody)
+			if err != nil {
+				log.Printf("Error processing %s message for session %s, it will be retried: %v",
+					messageBody.Action, messageBody.SessionID, err)
+				// If processing fails, DO NOT add it to the delete batch.
+				// It will become visible again on the queue for another attempt.
+			} else {
+				log.Printf("Successfully processed %s message, adding to delete batch.", messageBody.Action)
+				// On success, add the message to our list of messages to delete.
+				messagesToDelete = append(messagesToDelete, types.DeleteMessageBatchRequestEntry{
+					Id:            rawMessage.MessageId,
+					ReceiptHandle: rawMessage.ReceiptHandle,
+				})
+			}
+		}
+
+		// After processing the whole batch, delete the successful ones in a single API call
+		if len(messagesToDelete) > 0 {
+			err := sqsutil.DeleteMessageBatch(cfg.SQSSessionSchedulingQueueURL, sqsClient, messagesToDelete)
+			if err != nil {
+				log.Printf("Error batch deleting messages: %v", err)
+			}
+		}
 	}
 }
 
