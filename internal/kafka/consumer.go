@@ -63,8 +63,8 @@ func (c *Consumer) ConsumeDebeziumEvents() {
 				continue
 			}
 
-			c.updateSessionSchedules(event)
-			c.updateSessionNotification(event)
+			c.updateSessionSchedules(event)    // Schedule jobs based on session changes
+			c.updateSessionNotification(event) // Instant notification for session updates
 			continue
 		}
 
@@ -372,27 +372,14 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 		}
 		// Check if start time changed
 		if after.StartTime != before.StartTime {
-			closedTime := eventbridge.MicrosecondsToTime(after.StartTime)
-			log.Printf("Start time for session %s changed. Updating schedule.", after.ID)
-			err := c.SchedulerService.CreateOrUpdateSchedule(
-				after.ID,
-				closedTime,
-				"session-closed-",
-				"CLOSED",
-				"closed job",
-			)
-			if err != nil {
-				log.Printf("Error updating closed job for session %s: %v", after.ID, err)
-			}
-
-			// Also update the reminder email schedule (1 day before new start time) using reminder-specific scheduler
+			// Update the reminder email schedule (1 day before new start time) using reminder-specific scheduler
 			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
 			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
 			log.Printf("Session start time changed. Updating reminder email schedule for session %s to %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
 
 			// Use the specialized reminder scheduler method
-			err = c.SchedulerService.CreateOrUpdateReminderSchedule(
+			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
 				"session-reminder-",
@@ -404,6 +391,21 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				log.Printf("Error updating reminder email job for session %s: %v", after.ID, err)
 			} else {
 				log.Printf("Successfully updated reminder email schedule for session %s", after.ID)
+			}
+		}
+
+		if after.EndTime != before.EndTime {
+			closedTime := eventbridge.MicrosecondsToTime(after.EndTime)
+			log.Printf("End time for session %s changed. Updating schedule.", after.ID)
+			err := c.SchedulerService.CreateOrUpdateSchedule(
+				after.ID,
+				closedTime,
+				"session-closed-",
+				"CLOSED",
+				"closed job",
+			)
+			if err != nil {
+				log.Printf("Error updating closed job for session %s: %v", after.ID, err)
 			}
 		}
 
