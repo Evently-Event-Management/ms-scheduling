@@ -15,19 +15,7 @@ type DatabaseService struct {
 	migrator *migrations.Migrator
 }
 
-type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
-}
-
-func NewDatabaseService(config DatabaseConfig) (*DatabaseService, error) {
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		config.Host, config.Port, config.User, config.Password, config.DBName, config.SSLMode)
-
+func NewDatabaseService(dsn string) (*DatabaseService, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %v", err)
@@ -38,7 +26,7 @@ func NewDatabaseService(config DatabaseConfig) (*DatabaseService, error) {
 		return nil, fmt.Errorf("failed to ping database: %v", err)
 	}
 
-	log.Printf("Successfully connected to database: %s", config.DBName)
+	log.Printf("Successfully connected to database using DSN")
 
 	// Initialize migrator
 	migrationsDir := filepath.Join("migrations")

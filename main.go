@@ -59,15 +59,7 @@ func main() {
 	schedulerService := eventbridge.NewService(cfg, schedulerClient)
 
 	// Initialize database service
-	dbConfig := services.DatabaseConfig{
-		Host:     cfg.DatabaseHost,
-		Port:     cfg.DatabasePort,
-		User:     cfg.DatabaseUser,
-		Password: cfg.DatabasePassword,
-		DBName:   cfg.DatabaseName,
-		SSLMode:  cfg.DatabaseSSLMode,
-	}
-	dbService, err := services.NewDatabaseService(dbConfig)
+	dbService, err := services.NewDatabaseService(cfg.PostgresDSN)
 	if err != nil {
 		log.Fatalf("Failed to initialize database service: %v", err)
 	}

@@ -29,12 +29,7 @@ type Config struct {
 	SchedulerGroupName           string
 
 	// Database configuration
-	DatabaseHost     string
-	DatabasePort     string
-	DatabaseName     string
-	DatabaseUser     string
-	DatabasePassword string
-	DatabaseSSLMode  string
+	PostgresDSN string
 
 	// Email configuration
 	SMTPHost     string
@@ -92,12 +87,7 @@ func Load() Config {
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
 
 		// Database configuration
-		DatabaseHost:     getEnv("DATABASE_HOST", "localhost"),
-		DatabasePort:     getEnv("DATABASE_PORT", "5432"),
-		DatabaseName:     getEnv("DATABASE_NAME", "ticketly"),
-		DatabaseUser:     getEnv("DATABASE_USER", "postgres"),
-		DatabasePassword: getEnv("DATABASE_PASSWORD", ""),
-		DatabaseSSLMode:  getEnv("DATABASE_SSL_MODE", "disable"),
+		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost port=5432 user=postgres password= dbname=ticketly sslmode=disable"),
 
 		// Email configuration
 		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
