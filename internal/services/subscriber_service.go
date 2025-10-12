@@ -103,7 +103,7 @@ func (s *SubscriberService) AddSubscription(subscriberID int, category models.Su
 	query := `
 		INSERT INTO subscriptions (subscriber_id, category, target_uuid) 
 		VALUES ($1, $2, $3) 
-		ON CONFLICT (subscriber_id, category, COALESCE(target_uuid, ''), COALESCE(target_id, 0)) DO NOTHING
+		ON CONFLICT (subscriber_id, category, target_uuid) DO NOTHING
 	`
 
 	_, err := s.DB.Exec(query, subscriberID, category, targetUUID)

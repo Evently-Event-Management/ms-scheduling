@@ -77,24 +77,24 @@ func setupOrganizationSubscriptions(db *sql.DB) error {
 	// Insert organization subscriptions for test organization ID 123
 	subscriptions := []struct {
 		subscriberID int
-		targetID     int
+		targetUUID   string
 	}{
-		{1, 123}, // isurumuni.22@cse.mrt.ac.lk
-		{2, 123}, // user2@example.com
-		{3, 123}, // user3@example.com
-		{4, 123}, // customer@example.com
+		{1, "f47ac10b-58cc-4372-a567-0e02b2c3d479"}, // isurumuni.22@cse.mrt.ac.lk
+		{2, "f47ac10b-58cc-4372-a567-0e02b2c3d479"}, // user2@example.com
+		{3, "f47ac10b-58cc-4372-a567-0e02b2c3d479"}, // user3@example.com
+		{4, "f47ac10b-58cc-4372-a567-0e02b2c3d479"}, // customer@example.com
 	}
 
 	for _, sub := range subscriptions {
 		query := `
-			INSERT INTO subscriptions (subscriber_id, category, target_id, created_at) 
+			INSERT INTO subscriptions (subscriber_id, category, target_uuid, created_at) 
 			SELECT $1, 'organization', $2, NOW()
 			WHERE NOT EXISTS (
 				SELECT 1 FROM subscriptions 
-				WHERE subscriber_id = $1 AND category = 'organization' AND target_id = $2
+				WHERE subscriber_id = $1 AND category = 'organization' AND target_uuid = $2
 			)
 		`
-		_, err := db.Exec(query, sub.subscriberID, sub.targetID)
+		_, err := db.Exec(query, sub.subscriberID, sub.targetUUID)
 		if err != nil {
 			return fmt.Errorf("error inserting organization subscription for subscriber %d: %w", sub.subscriberID, err)
 		}

@@ -46,7 +46,7 @@ type Subscription struct {
 	SubscriptionID int                  `json:"subscription_id" db:"subscription_id"`
 	SubscriberID   int                  `json:"subscriber_id" db:"subscriber_id"`
 	Category       SubscriptionCategory `json:"category" db:"category"`
-	TargetID       int                  `json:"target_id" db:"target_id"`
+	TargetUUID     string               `json:"target_uuid" db:"target_uuid"`
 	SubscribedAt   time.Time            `json:"subscribed_at" db:"subscribed_at"`
 }
 
