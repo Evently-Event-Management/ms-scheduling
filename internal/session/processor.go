@@ -10,8 +10,8 @@ import (
 	"ms-scheduling/internal/models"
 )
 
-// ProcessSessionMessage makes the API call to the Event Service to update the session status.
-func ProcessSessionMessage(cfg config.Config, client *http.Client, token string, msg *models.SQSMessageBody) error {
+// ProcessSessionMessage makes the API call to the Event Service to update the session status or sends reminder emails.
+func ProcessSessionMessage(cfg config.Config, client *http.Client, token string, msg *models.SQSMessageBody, subscriberService interface{}) error {
 	var apiPath string
 
 	switch msg.Action {
@@ -19,6 +19,9 @@ func ProcessSessionMessage(cfg config.Config, client *http.Client, token string,
 		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/on-sale", msg.SessionID)
 	case "CLOSED":
 		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/closed", msg.SessionID)
+	case "REMINDER_EMAIL":
+		// Handle reminder email - this doesn't call the Event Service API
+		return ProcessReminderEmail(msg.SessionID, subscriberService)
 	default:
 		return fmt.Errorf("unknown action in SQS message: %s", msg.Action)
 	}
@@ -63,4 +66,24 @@ func ProcessSessionMessage(cfg config.Config, client *http.Client, token string,
 
 	log.Printf("Successfully processed action '%s' for session %s", msg.Action, msg.SessionID)
 	return nil
+}
+
+// ProcessReminderEmail handles the reminder email action
+func ProcessReminderEmail(sessionID string, subscriberService interface{}) error {
+	log.Printf("Processing reminder email for session %s", sessionID)
+
+	// Type assert the subscriber service to access the ProcessSessionReminder method
+	if ss, ok := subscriberService.(interface {
+		ProcessSessionReminder(string) error
+	}); ok {
+		err := ss.ProcessSessionReminder(sessionID)
+		if err != nil {
+			log.Printf("Error sending reminder emails for session %s: %v", sessionID, err)
+			return err
+		}
+		log.Printf("Successfully sent reminder emails for session %s", sessionID)
+		return nil
+	}
+
+	return fmt.Errorf("subscriber service does not implement ProcessSessionReminder method")
 }

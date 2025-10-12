@@ -170,7 +170,7 @@ func main() {
 			}
 
 			// Process the message based on its action
-			err = session.ProcessSessionMessage(cfg, httpClient, token, &messageBody)
+			err = session.ProcessSessionMessage(cfg, httpClient, token, &messageBody, subscriberService)
 			if err != nil {
 				log.Printf("Error processing %s message for session %s, it will be retried: %v",
 					messageBody.Action, messageBody.SessionID, err)

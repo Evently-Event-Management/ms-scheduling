@@ -49,14 +49,23 @@ func (e *EmailService) SendEmail(to, subject, body string) error {
 			"%s\r\n",
 		from, to, subject, e.formatEmailBody(body)))
 
-	// Send email
+	// Verbose logging for debugging
+	log.Printf("[EmailService] Attempting to send email...")
+	log.Printf("[EmailService] SMTP Server: %s", smtpServer)
+	log.Printf("[EmailService] SMTP Username: %s", e.Username)
+	log.Printf("[EmailService] SMTP From: %s", from)
+	log.Printf("[EmailService] SMTP To: %s", to)
+	log.Printf("[EmailService] Subject: %s", subject)
+	log.Printf("[EmailService] Message Body: %s", body)
+
 	err := smtp.SendMail(smtpServer, auth, e.FromEmail, []string{to}, msg)
 	if err != nil {
-		log.Printf("Failed to send email to %s: %v", to, err)
+		log.Printf("[EmailService] Failed to send email to %s", to)
+		log.Printf("[EmailService] SMTP Error: %v", err)
 		return err
 	}
 
-	log.Printf("Email sent successfully to %s", to)
+	log.Printf("[EmailService] Email sent successfully to %s", to)
 	return nil
 }
 
