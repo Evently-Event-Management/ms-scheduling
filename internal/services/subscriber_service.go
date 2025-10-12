@@ -1,0 +1,1020 @@
+package services
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"ms-scheduling/internal/models"
+	"strings"
+	"time"
+)
+
+type SubscriberService struct {
+	DB             *sql.DB
+	KeycloakClient *KeycloakClient
+	EmailService   *EmailService
+}
+
+func NewSubscriberService(db *sql.DB, keycloakClient *KeycloakClient, emailService *EmailService) *SubscriberService {
+	return &SubscriberService{
+		DB:             db,
+		KeycloakClient: keycloakClient,
+		EmailService:   emailService,
+	}
+}
+
+// GetOrCreateSubscriber gets subscriber by user ID or creates a new one
+func (s *SubscriberService) GetOrCreateSubscriber(userID string) (*models.Subscriber, error) {
+	// First, try to get subscriber from database by UserID
+	subscriber, err := s.getSubscriberByUserID(userID)
+	if err == nil {
+		return subscriber, nil
+	}
+
+	// If not found, fetch email from Keycloak
+	email, err := s.KeycloakClient.GetUserEmail(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user email from Keycloak: %v", err)
+	}
+
+	// Create new subscriber
+	subscriber, err = s.createSubscriber(userID, email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create subscriber: %v", err)
+	}
+
+	log.Printf("Created new subscriber for user %s with email %s", userID, email)
+	return subscriber, nil
+}
+
+// getSubscriberByUserID retrieves subscriber from database using Keycloak UUID
+func (s *SubscriberService) getSubscriberByUserID(userID string) (*models.Subscriber, error) {
+	// Try to find by user_id (Keycloak UUID) first
+	query := `
+		SELECT subscriber_id, user_id, subscriber_mail, created_at 
+		FROM subscribers 
+		WHERE user_id = $1
+	`
+
+	var subscriber models.Subscriber
+	err := s.DB.QueryRow(query, userID).Scan(
+		&subscriber.SubscriberID,
+		&subscriber.UserID,
+		&subscriber.SubscriberMail,
+		&subscriber.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &subscriber, nil
+}
+
+// createSubscriber creates a new subscriber in the database with both user_id and email
+func (s *SubscriberService) createSubscriber(userID string, email string) (*models.Subscriber, error) {
+	query := `
+		INSERT INTO subscribers (user_id, subscriber_mail) 
+		VALUES ($1, $2) 
+		ON CONFLICT (subscriber_mail) DO UPDATE SET 
+			user_id = EXCLUDED.user_id,
+			created_at = subscribers.created_at
+		RETURNING subscriber_id, user_id, subscriber_mail, created_at
+	`
+
+	var subscriber models.Subscriber
+	err := s.DB.QueryRow(query, userID, email).Scan(
+		&subscriber.SubscriberID,
+		&subscriber.UserID,
+		&subscriber.SubscriberMail,
+		&subscriber.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &subscriber, nil
+}
+
+// AddSubscription adds a subscription for a subscriber
+func (s *SubscriberService) AddSubscription(subscriberID int, category models.SubscriptionCategory, targetUUID string) error {
+	query := `
+		INSERT INTO subscriptions (subscriber_id, category, target_uuid) 
+		VALUES ($1, $2, $3) 
+		ON CONFLICT (subscriber_id, category, target_uuid) DO NOTHING
+	`
+
+	_, err := s.DB.Exec(query, subscriberID, category, targetUUID)
+	return err
+}
+
+// SendOrderConfirmationEmail sends order confirmation email
+func (s *SubscriberService) SendOrderConfirmationEmail(subscriber *models.Subscriber, order *OrderCreatedEvent) error {
+	log.Printf("Sending order confirmation email to %s for order %s", subscriber.SubscriberMail, order.OrderID)
+
+	emailContent := s.generateOrderEmailTemplate(order)
+	subject := fmt.Sprintf("Order Confirmation - %s", order.OrderID)
+
+	return s.EmailService.SendEmail(subscriber.SubscriberMail, subject, emailContent)
+}
+
+// generateOrderEmailTemplate creates the email content
+func (s *SubscriberService) generateOrderEmailTemplate(order *OrderCreatedEvent) string {
+	template := `
+Dear Customer,
+
+Your order has been confirmed!
+
+Order Details:
+- Order ID: %s
+- Event ID: %s
+- Session ID: %s
+- Status: %s
+- Total Price: $%.2f
+- Created At: %s
+
+Tickets:
+%s
+
+Thank you for your purchase!
+
+Best regards,
+Ticketly Team
+`
+
+	ticketDetails := ""
+	for _, ticket := range order.Tickets {
+		ticketDetails += fmt.Sprintf("- Seat: %s (%s) - $%.2f\n",
+			ticket.SeatLabel, ticket.TierName, ticket.PriceAtPurchase)
+	}
+
+	return fmt.Sprintf(template,
+		order.OrderID,
+		order.EventID,
+		order.SessionID,
+		order.Status,
+		order.Price,
+		order.CreatedAt,
+		ticketDetails,
+	)
+}
+
+// OrderCreatedEvent represents the structure of the order.created Kafka event
+type OrderCreatedEvent struct {
+	OrderID        string   `json:"OrderID"`
+	UserID         string   `json:"UserID"`
+	EventID        string   `json:"EventID"`
+	SessionID      string   `json:"SessionID"`
+	Status         string   `json:"Status"`
+	SubTotal       float64  `json:"SubTotal"`
+	DiscountID     string   `json:"DiscountID"`
+	DiscountCode   string   `json:"DiscountCode"`
+	DiscountAmount float64  `json:"DiscountAmount"`
+	Price          float64  `json:"Price"`
+	CreatedAt      string   `json:"CreatedAt"`
+	PaymentAT      string   `json:"PaymentAT"`
+	Tickets        []Ticket `json:"tickets"`
+}
+
+type Ticket struct {
+	TicketID        string  `json:"ticket_id"`
+	OrderID         string  `json:"order_id"`
+	SeatID          string  `json:"seat_id"`
+	SeatLabel       string  `json:"seat_label"`
+	Colour          string  `json:"colour"`
+	TierID          string  `json:"tier_id"`
+	TierName        string  `json:"tier_name"`
+	PriceAtPurchase float64 `json:"price_at_purchase"`
+	IssuedAt        string  `json:"issued_at"`
+	CheckedIn       bool    `json:"checked_in"`
+	CheckedInTime   string  `json:"checked_in_time"`
+}
+
+// GetSessionSubscribers retrieves all subscribers for a specific session
+func (s *SubscriberService) GetSessionSubscribers(sessionID string) ([]models.Subscriber, error) {
+	query := `
+		SELECT DISTINCT s.subscriber_id, s.subscriber_mail, s.user_id, s.created_at
+		FROM subscribers s
+		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
+		WHERE sub.category = 'session' AND sub.target_uuid = $1`
+
+	rows, err := s.DB.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying session subscribers: %w", err)
+	}
+	defer rows.Close()
+
+	var subscribers []models.Subscriber
+	for rows.Next() {
+		var subscriber models.Subscriber
+		var userID sql.NullString
+
+		err := rows.Scan(
+			&subscriber.SubscriberID,
+			&subscriber.SubscriberMail,
+			&userID,
+			&subscriber.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning subscriber: %w", err)
+		}
+
+		if userID.Valid {
+			subscriber.UserID = &userID.String
+		}
+
+		subscribers = append(subscribers, subscriber)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating subscribers: %w", err)
+	}
+
+	return subscribers, nil
+}
+
+// ProcessSessionUpdate handles session update notifications from Debezium
+func (s *SubscriberService) ProcessSessionUpdate(sessionUpdate *models.DebeziumSessionEvent) error {
+	log.Printf("Processing session update event: %s", sessionUpdate.Payload.Operation)
+
+	// Skip only initial snapshots
+	if sessionUpdate.Payload.Operation == "r" {
+		log.Printf("Skipping session update for initial snapshot operation: %s", sessionUpdate.Payload.Operation)
+		return nil
+	}
+
+	var sessionID string
+
+	// Get session ID from appropriate data based on operation
+	if sessionUpdate.Payload.Operation == "d" {
+		// For delete operations, get session ID from before data
+		if sessionUpdate.Payload.Before != nil {
+			sessionID = sessionUpdate.Payload.Before.ID
+		} else {
+			return fmt.Errorf("no before data available for session deletion")
+		}
+	} else {
+		// For create/update operations, get session ID from after data
+		if sessionUpdate.Payload.After != nil {
+			sessionID = sessionUpdate.Payload.After.ID
+		} else {
+			return fmt.Errorf("no after data available for session update")
+		}
+	}
+
+	// Get all subscribers for this session
+	subscribers, err := s.GetSessionSubscribers(sessionID)
+	if err != nil {
+		return fmt.Errorf("error getting session subscribers: %w", err)
+	}
+
+	if len(subscribers) == 0 {
+		log.Printf("No subscribers found for session ID: %s", sessionID)
+		return nil
+	}
+
+	// Send notification emails
+	return s.SendSessionUpdateEmails(subscribers, sessionUpdate)
+}
+
+// SendSessionUpdateEmails sends notification emails to all session subscribers
+func (s *SubscriberService) SendSessionUpdateEmails(subscribers []models.Subscriber, sessionUpdate *models.DebeziumSessionEvent) error {
+	log.Printf("Sending session update emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionUpdateEmail(subscriber, sessionUpdate)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending session update email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Session update email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// ProcessEventUpdate handles event update notifications from Debezium
+func (s *SubscriberService) ProcessEventUpdate(eventUpdate *models.DebeziumEventEvent) error {
+	log.Printf("Processing event update event: %s", eventUpdate.Payload.Operation)
+
+	// Skip only initial snapshots
+	if eventUpdate.Payload.Operation == "r" {
+		log.Printf("Skipping event update for initial snapshot operation: %s", eventUpdate.Payload.Operation)
+		return nil
+	}
+
+	var eventID string
+
+	// Get event ID from appropriate data based on operation
+	if eventUpdate.Payload.Operation == "d" {
+		// For delete operations, get event ID from before data
+		if eventUpdate.Payload.Before != nil {
+			eventID = eventUpdate.Payload.Before.ID
+		} else {
+			return fmt.Errorf("no before data available for event deletion")
+		}
+	} else {
+		// For create/update operations, get event ID from after data
+		if eventUpdate.Payload.After != nil {
+			eventID = eventUpdate.Payload.After.ID
+		} else {
+			return fmt.Errorf("no after data available for event update")
+		}
+	}
+
+	// Get all subscribers for this event
+	subscribers, err := s.GetEventSubscribers(eventID)
+	if err != nil {
+		return fmt.Errorf("error getting event subscribers: %w", err)
+	}
+
+	if len(subscribers) == 0 {
+		log.Printf("No subscribers found for event ID: %s", eventID)
+		return nil
+	}
+
+	// Send notification emails
+	return s.SendEventUpdateEmails(subscribers, eventUpdate)
+}
+
+// GetEventSubscribers retrieves all subscribers for a specific event
+func (s *SubscriberService) GetEventSubscribers(eventID string) ([]models.Subscriber, error) {
+	query := `
+		SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
+		FROM subscribers s
+		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
+		WHERE sub.category = 'event' AND sub.target_uuid = $1
+	`
+
+	rows, err := s.DB.Query(query, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying event subscribers: %w", err)
+	}
+	defer rows.Close()
+
+	var subscribers []models.Subscriber
+
+	for rows.Next() {
+		var subscriber models.Subscriber
+		err := rows.Scan(
+			&subscriber.SubscriberID,
+			&subscriber.UserID,
+			&subscriber.SubscriberMail,
+			&subscriber.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning subscriber: %w", err)
+		}
+		subscribers = append(subscribers, subscriber)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating event subscribers: %w", err)
+	}
+
+	return subscribers, nil
+}
+
+// SendEventUpdateEmails sends notification emails to all event subscribers
+func (s *SubscriberService) SendEventUpdateEmails(subscribers []models.Subscriber, eventUpdate *models.DebeziumEventEvent) error {
+	log.Printf("Sending event update emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildEventUpdateEmail(subscriber, eventUpdate)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending event update email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Event update email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// buildEventUpdateEmail creates the email content for event updates
+func (s *SubscriberService) buildEventUpdateEmail(subscriber models.Subscriber, eventUpdate *models.DebeziumEventEvent) (string, string) {
+	after := eventUpdate.Payload.After
+	before := eventUpdate.Payload.Before
+	operation := eventUpdate.Payload.Operation
+
+	// Convert timestamp to readable format
+	timestamp := time.UnixMilli(eventUpdate.Payload.Timestamp)
+
+	var subject string
+	var body strings.Builder
+
+	// Handle different operations
+	if operation == "d" {
+		// Event deletion
+		if before == nil {
+			return "", ""
+		}
+
+		subject = fmt.Sprintf("Event Cancelled: %s", before.Title)
+
+		body.WriteString("Dear Subscriber,\n\n")
+		body.WriteString("⚠️ IMPORTANT: An event you're subscribed to has been CANCELLED/DELETED:\n\n")
+
+		// Deleted event details
+		body.WriteString("Cancelled Event Details:\n")
+		body.WriteString(fmt.Sprintf("Event ID: %s\n", before.ID))
+		body.WriteString(fmt.Sprintf("Title: %s\n", before.Title))
+		body.WriteString(fmt.Sprintf("Description: %s\n", before.Description))
+		body.WriteString(fmt.Sprintf("Status: %s\n", before.Status))
+		body.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(before.CreatedAt/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("Cancelled: %s\n\n", timestamp.Format("2006-01-02 15:04:05")))
+
+		body.WriteString("🔔 This event has been permanently removed from the schedule.\n")
+		body.WriteString("📧 If you had tickets for sessions in this event, please check your email for refund information or contact support.\n\n")
+
+	} else {
+		// Event update or creation
+		if after == nil {
+			return "", ""
+		}
+
+		subject = fmt.Sprintf("Event Update: %s", after.Title)
+
+		body.WriteString("Dear Subscriber,\n\n")
+		body.WriteString("An event you're subscribed to has been updated:\n\n")
+
+		// Event details
+		body.WriteString(fmt.Sprintf("Event ID: %s\n", after.ID))
+		body.WriteString(fmt.Sprintf("Title: %s\n", after.Title))
+		body.WriteString(fmt.Sprintf("Description: %s\n", after.Description))
+		body.WriteString(fmt.Sprintf("Status: %s\n", after.Status))
+		body.WriteString(fmt.Sprintf("Created: %s\n", time.Unix(after.CreatedAt/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("Updated: %s\n\n", timestamp.Format("2006-01-02 15:04:05")))
+
+		// Show what changed
+		if before != nil && operation == "u" {
+			body.WriteString("Changes:\n")
+
+			if before.Title != after.Title {
+				body.WriteString(fmt.Sprintf("• Title: %s → %s\n", before.Title, after.Title))
+			}
+
+			if before.Description != after.Description {
+				body.WriteString(fmt.Sprintf("• Description: %s → %s\n", before.Description, after.Description))
+			}
+
+			if before.Status != after.Status {
+				body.WriteString(fmt.Sprintf("• Status: %s → %s\n", before.Status, after.Status))
+			}
+
+			if before.Overview != after.Overview {
+				body.WriteString("• Overview: Updated\n")
+			}
+
+			if before.CategoryID != after.CategoryID {
+				body.WriteString("• Category: Updated\n")
+			}
+		} else if operation == "c" {
+			// New event notification
+			body.WriteString("New Event Details:\n")
+			body.WriteString(fmt.Sprintf("• Status: %s\n", after.Status))
+			if after.Overview != "" {
+				body.WriteString(fmt.Sprintf("• Overview: %s\n", after.Overview))
+			}
+		}
+
+		// Special handling for status changes
+		if operation == "u" && before != nil && before.Status != after.Status {
+			body.WriteString("\n🔔 Status Change Notification:\n")
+			switch after.Status {
+			case "APPROVED":
+				body.WriteString("✅ This event has been APPROVED and is now available for booking!\n")
+			case "REJECTED":
+				body.WriteString("❌ This event has been REJECTED.")
+				if after.RejectionReason != "" {
+					body.WriteString(fmt.Sprintf(" Reason: %s", after.RejectionReason))
+				}
+				body.WriteString("\n")
+			case "PENDING":
+				body.WriteString("⏳ This event is now under review.\n")
+			}
+		}
+	}
+
+	body.WriteString("\nBest regards,\nTicketly Team")
+
+	return subject, body.String()
+}
+
+// buildSessionUpdateEmail creates the email content for session updates
+func (s *SubscriberService) buildSessionUpdateEmail(subscriber models.Subscriber, sessionUpdate *models.DebeziumSessionEvent) (string, string) {
+	after := sessionUpdate.Payload.After
+	before := sessionUpdate.Payload.Before
+	operation := sessionUpdate.Payload.Operation
+
+	// Convert timestamp to readable format
+	timestamp := time.UnixMilli(sessionUpdate.Payload.Timestamp)
+
+	var subject string
+	var body strings.Builder
+
+	// Handle different operations
+	if operation == "d" {
+		// Session deletion
+		if before == nil {
+			return "", ""
+		}
+
+		subject = fmt.Sprintf("Session Cancelled: Session %s", before.ID)
+
+		body.WriteString("Dear Subscriber,\n\n")
+		body.WriteString("⚠️ IMPORTANT: A session you're subscribed to has been CANCELLED/DELETED:\n\n")
+
+		// Deleted session details
+		body.WriteString("Cancelled Session Details:\n")
+		body.WriteString(fmt.Sprintf("Session ID: %s\n", before.ID))
+		body.WriteString(fmt.Sprintf("Event ID: %s\n", before.EventID))
+		body.WriteString(fmt.Sprintf("Status: %s\n", before.Status))
+		body.WriteString(fmt.Sprintf("Session Type: %s\n", before.SessionType))
+		body.WriteString(fmt.Sprintf("Start Time: %s\n", time.Unix(before.StartTime/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("End Time: %s\n", time.Unix(before.EndTime/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("Cancelled: %s\n\n", timestamp.Format("2006-01-02 15:04:05")))
+
+		// Parse venue details if available
+		if before.VenueDetails != "" {
+			body.WriteString("Venue Information:\n")
+			var venueMap map[string]interface{}
+			if err := json.Unmarshal([]byte(before.VenueDetails), &venueMap); err == nil {
+				if name, ok := venueMap["name"].(string); ok {
+					body.WriteString(fmt.Sprintf("Venue: %s\n", name))
+				}
+				if address, ok := venueMap["address"].(string); ok {
+					body.WriteString(fmt.Sprintf("Address: %s\n", address))
+				}
+			}
+			body.WriteString("\n")
+		}
+
+		body.WriteString("🔔 This session has been permanently removed from the schedule.\n")
+		body.WriteString("📧 If you had tickets for this session, please check your email for refund information or contact support.\n\n")
+
+	} else {
+		// Session update or creation
+		if after == nil {
+			return "", ""
+		}
+
+		subject = fmt.Sprintf("Session Update: Session %s", after.ID)
+
+		body.WriteString("Dear Subscriber,\n\n")
+		body.WriteString("A session you're subscribed to has been updated:\n\n")
+
+		// Session details
+		body.WriteString(fmt.Sprintf("Session ID: %s\n", after.ID))
+		body.WriteString(fmt.Sprintf("Event ID: %s\n", after.EventID))
+		body.WriteString(fmt.Sprintf("Status: %s\n", after.Status))
+		body.WriteString(fmt.Sprintf("Session Type: %s\n", after.SessionType))
+		body.WriteString(fmt.Sprintf("Start Time: %s\n", time.Unix(after.StartTime/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("End Time: %s\n", time.Unix(after.EndTime/1000000, 0).Format("2006-01-02 15:04:05")))
+		body.WriteString(fmt.Sprintf("Updated: %s\n\n", timestamp.Format("2006-01-02 15:04:05")))
+
+		// Show what changed
+		if before != nil && operation == "u" {
+			body.WriteString("Changes:\n")
+
+			if before.Status != after.Status {
+				body.WriteString(fmt.Sprintf("• Status: %s → %s\n", before.Status, after.Status))
+			}
+
+			if before.StartTime != after.StartTime {
+				beforeTime := time.Unix(before.StartTime/1000000, 0).Format("2006-01-02 15:04:05")
+				afterTime := time.Unix(after.StartTime/1000000, 0).Format("2006-01-02 15:04:05")
+				body.WriteString(fmt.Sprintf("• Start Time: %s → %s\n", beforeTime, afterTime))
+			}
+
+			if before.EndTime != after.EndTime {
+				beforeTime := time.Unix(before.EndTime/1000000, 0).Format("2006-01-02 15:04:05")
+				afterTime := time.Unix(after.EndTime/1000000, 0).Format("2006-01-02 15:04:05")
+				body.WriteString(fmt.Sprintf("• End Time: %s → %s\n", beforeTime, afterTime))
+			}
+
+			if before.SessionType != after.SessionType {
+				body.WriteString(fmt.Sprintf("• Session Type: %s → %s\n", before.SessionType, after.SessionType))
+			}
+
+			if before.VenueDetails != after.VenueDetails {
+				body.WriteString("• Venue Details: Updated\n")
+			}
+
+			if before.SalesStartTime != after.SalesStartTime {
+				var beforeSales, afterSales string
+				if before.SalesStartTime > 0 {
+					beforeSales = time.Unix(before.SalesStartTime/1000000, 0).Format("2006-01-02 15:04:05")
+				} else {
+					beforeSales = "Not set"
+				}
+				if after.SalesStartTime > 0 {
+					afterSales = time.Unix(after.SalesStartTime/1000000, 0).Format("2006-01-02 15:04:05")
+				} else {
+					afterSales = "Not set"
+				}
+				body.WriteString(fmt.Sprintf("• Sales Start Time: %s → %s\n", beforeSales, afterSales))
+			}
+		} else if operation == "c" {
+			// New session notification
+			body.WriteString("New Session Details:\n")
+			body.WriteString(fmt.Sprintf("• Status: %s\n", after.Status))
+			body.WriteString(fmt.Sprintf("• Session Type: %s\n", after.SessionType))
+			if after.SalesStartTime > 0 {
+				salesTime := time.Unix(after.SalesStartTime/1000000, 0).Format("2006-01-02 15:04:05")
+				body.WriteString(fmt.Sprintf("• Sales Start Time: %s\n", salesTime))
+			}
+		}
+	}
+
+	body.WriteString("\nBest regards,\nTicketly Team")
+
+	return subject, body.String()
+}
+
+// GetOrganizationSubscribers retrieves all subscribers for a specific organization
+func (s *SubscriberService) GetOrganizationSubscribers(organizationID string) ([]models.Subscriber, error) {
+	// Query subscribers who have subscribed to the organization
+	query := `
+		SELECT DISTINCT s.subscriber_id, s.user_id, s.subscriber_mail, s.created_at 
+		FROM subscribers s
+		JOIN subscriptions sub ON s.subscriber_id = sub.subscriber_id
+		WHERE sub.category = 'organization' AND sub.target_uuid = $1
+	`
+
+	rows, err := s.DB.Query(query, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying organization subscribers: %w", err)
+	}
+	defer rows.Close()
+
+	var subscribers []models.Subscriber
+
+	for rows.Next() {
+		var subscriber models.Subscriber
+		err := rows.Scan(
+			&subscriber.SubscriberID,
+			&subscriber.UserID,
+			&subscriber.SubscriberMail,
+			&subscriber.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning organization subscriber: %w", err)
+		}
+		subscribers = append(subscribers, subscriber)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating organization subscribers: %w", err)
+	}
+
+	return subscribers, nil
+}
+
+// ProcessEventCreation handles event creation notifications from Debezium
+func (s *SubscriberService) ProcessEventCreation(eventUpdate *models.DebeziumEventEvent) error {
+	log.Printf("Processing event creation notification: %s", eventUpdate.Payload.Operation)
+
+	// Only handle creation operations
+	if eventUpdate.Payload.Operation != "c" {
+		return nil
+	}
+
+	// Get organization ID from after data (for creation operations)
+	if eventUpdate.Payload.After == nil {
+		return fmt.Errorf("no after data available for event creation")
+	}
+
+	organizationID := eventUpdate.Payload.After.OrganizationID
+	eventID := eventUpdate.Payload.After.ID
+
+	log.Printf("Processing event creation for event %s in organization %s", eventID, organizationID)
+
+	// Get all subscribers for this organization
+	subscribers, err := s.GetOrganizationSubscribers(organizationID)
+	if err != nil {
+		return fmt.Errorf("error getting organization subscribers: %w", err)
+	}
+
+	if len(subscribers) == 0 {
+		log.Printf("No organization subscribers found for organization ID: %s", organizationID)
+		return nil
+	}
+
+	log.Printf("Found %d subscribers for organization %s", len(subscribers), organizationID)
+
+	// Send notification emails
+	return s.SendEventCreationEmails(subscribers, eventUpdate)
+}
+
+// SendEventCreationEmails sends notification emails to all organization subscribers for new events
+func (s *SubscriberService) SendEventCreationEmails(subscribers []models.Subscriber, eventUpdate *models.DebeziumEventEvent) error {
+	log.Printf("Sending event creation emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildEventCreationEmail(subscriber, eventUpdate)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending event creation email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Event creation email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// buildEventCreationEmail creates the email content for new event notifications
+func (s *SubscriberService) buildEventCreationEmail(subscriber models.Subscriber, eventUpdate *models.DebeziumEventEvent) (string, string) {
+	after := eventUpdate.Payload.After
+
+	// Convert timestamp to readable format
+	timestamp := time.UnixMilli(eventUpdate.Payload.Timestamp)
+	createdAt := models.MicroTimestampToTime(after.CreatedAt)
+
+	subject := fmt.Sprintf("🎉 New Event Created: %s", after.Title)
+
+	var body strings.Builder
+	body.WriteString(fmt.Sprintf("Hello %s,\n\n", subscriber.SubscriberMail))
+	body.WriteString("🎉 A new event has been created in your subscribed organization!\n\n")
+
+	body.WriteString("Event Details:\n")
+	body.WriteString(fmt.Sprintf("• Title: %s\n", after.Title))
+	body.WriteString(fmt.Sprintf("• Status: %s\n", after.Status))
+
+	if after.Description != "" {
+		body.WriteString(fmt.Sprintf("• Description: %s\n", after.Description))
+	}
+
+	if after.Overview != "" {
+		body.WriteString(fmt.Sprintf("• Overview: %s\n", after.Overview))
+	}
+
+	body.WriteString(fmt.Sprintf("• Created: %s\n", createdAt.Format("2006-01-02 15:04:05")))
+	body.WriteString(fmt.Sprintf("• Event ID: %s\n", after.ID))
+	body.WriteString(fmt.Sprintf("• Organization ID: %s\n", after.OrganizationID))
+
+	if after.CategoryID != "" {
+		body.WriteString(fmt.Sprintf("• Category ID: %s\n", after.CategoryID))
+	}
+
+	body.WriteString(fmt.Sprintf("\n📅 Notification sent at: %s\n", timestamp.Format("2006-01-02 15:04:05")))
+
+	if after.Status == "PENDING" {
+		body.WriteString("\n⏳ This event is currently pending approval. You'll be notified when it's approved and ready for booking.\n")
+	} else if after.Status == "APPROVED" {
+		body.WriteString("\n✅ This event is approved and ready for booking!\n")
+	}
+
+	body.WriteString("\nStay tuned for more updates about this event!")
+	body.WriteString("\n\nBest regards,\nTicketly Team")
+
+	return subject, body.String()
+}
+
+// ProcessSessionReminder handles session reminder email notifications (1 day before session)
+func (s *SubscriberService) ProcessSessionReminder(sessionID string) error {
+	log.Printf("Processing session reminder email for session ID: %s", sessionID)
+
+	// Get all subscribers for this session
+	sessionSubscribers, err := s.GetSessionSubscribers(sessionID)
+	if err != nil {
+		return fmt.Errorf("error getting session subscribers: %w", err)
+	}
+
+	// Get session details (we need event ID to also get event subscribers)
+	eventID, err := s.getEventIDFromSession(sessionID)
+	if err != nil {
+		log.Printf("Warning: Could not get event ID for session %s: %v", sessionID, err)
+		// Continue with just session subscribers
+	}
+
+	var eventSubscribers []models.Subscriber
+	if eventID != "" {
+		eventSubscribers, err = s.GetEventSubscribers(eventID)
+		if err != nil {
+			log.Printf("Warning: Could not get event subscribers for event %s: %v", eventID, err)
+		}
+	}
+
+	// Combine and deduplicate subscribers
+	allSubscribers := s.combineAndDeduplicateSubscribers(sessionSubscribers, eventSubscribers)
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s reminder", sessionID)
+		return nil
+	}
+
+	log.Printf("Found %d unique subscribers for session %s reminder", len(allSubscribers), sessionID)
+
+	// Get session details for email content
+	sessionDetails, err := s.getSessionDetails(sessionID)
+	if err != nil {
+		return fmt.Errorf("error getting session details: %w", err)
+	}
+
+	// Send reminder emails
+	return s.SendSessionReminderEmails(allSubscribers, sessionDetails)
+}
+
+// getEventIDFromSession retrieves the event ID associated with a session
+func (s *SubscriberService) getEventIDFromSession(sessionID string) (string, error) {
+	// This would typically query your database to get the event_id from the session
+	// For now, I'll provide a placeholder implementation
+	// You'll need to adjust this based on your actual database schema
+
+	query := `
+		SELECT event_id FROM event_sessions 
+		WHERE id = $1
+	`
+
+	var eventID string
+	err := s.DB.QueryRow(query, sessionID).Scan(&eventID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("session not found")
+		}
+		return "", err
+	}
+
+	return eventID, nil
+}
+
+// getSessionDetails retrieves session information for reminder emails
+func (s *SubscriberService) getSessionDetails(sessionID string) (*SessionReminderInfo, error) {
+	query := `
+		SELECT 
+			es.id,
+			es.event_id,
+			es.start_time,
+			es.end_time,
+			es.status,
+			es.venue_details,
+			es.session_type,
+			es.sales_start_time
+		FROM event_sessions es
+		WHERE es.id = $1
+	`
+
+	var session SessionReminderInfo
+	var venueDetailsJSON sql.NullString
+	var salesStartTime sql.NullInt64
+
+	err := s.DB.QueryRow(query, sessionID).Scan(
+		&session.SessionID,
+		&session.EventID,
+		&session.StartTime,
+		&session.EndTime,
+		&session.Status,
+		&venueDetailsJSON,
+		&session.SessionType,
+		&salesStartTime,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse venue details JSON if present
+	if venueDetailsJSON.Valid {
+		session.VenueDetails = venueDetailsJSON.String
+	}
+
+	if salesStartTime.Valid {
+		session.SalesStartTime = salesStartTime.Int64
+	}
+
+	// Try to get event title as well
+	if session.EventID != "" {
+		eventQuery := `SELECT title FROM events WHERE id = $1`
+		err := s.DB.QueryRow(eventQuery, session.EventID).Scan(&session.EventTitle)
+		if err != nil {
+			log.Printf("Could not get event title for event %s: %v", session.EventID, err)
+		}
+	}
+
+	return &session, nil
+}
+
+// combineAndDeduplicateSubscribers merges two subscriber lists and removes duplicates
+func (s *SubscriberService) combineAndDeduplicateSubscribers(sessionSubs, eventSubs []models.Subscriber) []models.Subscriber {
+	subscriberMap := make(map[int]models.Subscriber)
+
+	// Add session subscribers
+	for _, sub := range sessionSubs {
+		subscriberMap[sub.SubscriberID] = sub
+	}
+
+	// Add event subscribers (will overwrite duplicates, which is fine)
+	for _, sub := range eventSubs {
+		subscriberMap[sub.SubscriberID] = sub
+	}
+
+	// Convert map back to slice
+	var result []models.Subscriber
+	for _, sub := range subscriberMap {
+		result = append(result, sub)
+	}
+
+	return result
+}
+
+// SendSessionReminderEmails sends reminder emails to all subscribers
+func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
+	log.Printf("Sending session reminder emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionReminderEmail(subscriber, sessionInfo)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending session reminder email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Session reminder email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// buildSessionReminderEmail creates the email content for session reminders
+func (s *SubscriberService) buildSessionReminderEmail(subscriber models.Subscriber, sessionInfo *SessionReminderInfo) (string, string) {
+	// Convert timestamps to readable format
+	startTime := models.MicroTimestampToTime(sessionInfo.StartTime)
+	endTime := models.MicroTimestampToTime(sessionInfo.EndTime)
+
+	var eventTitle string
+	if sessionInfo.EventTitle != "" {
+		eventTitle = sessionInfo.EventTitle
+	} else {
+		eventTitle = "Your Event"
+	}
+
+	subject := fmt.Sprintf("🔔 Reminder: %s starts tomorrow!", eventTitle)
+
+	var body strings.Builder
+	body.WriteString(fmt.Sprintf("Hello %s,\n\n", subscriber.SubscriberMail))
+	body.WriteString("🔔 This is a friendly reminder that you have a session starting tomorrow!\n\n")
+
+	body.WriteString("Session Details:\n")
+	if sessionInfo.EventTitle != "" {
+		body.WriteString(fmt.Sprintf("• Event: %s\n", sessionInfo.EventTitle))
+	}
+	body.WriteString(fmt.Sprintf("• Session Type: %s\n", sessionInfo.SessionType))
+	body.WriteString(fmt.Sprintf("• Status: %s\n", sessionInfo.Status))
+	body.WriteString(fmt.Sprintf("• Start Time: %s\n", startTime.Format("2006-01-02 15:04:05")))
+	body.WriteString(fmt.Sprintf("• End Time: %s\n", endTime.Format("2006-01-02 15:04:05")))
+	body.WriteString(fmt.Sprintf("• Session ID: %s\n", sessionInfo.SessionID))
+
+	// Add venue details if available
+	if sessionInfo.VenueDetails != "" {
+		body.WriteString(fmt.Sprintf("• Venue Details: %s\n", sessionInfo.VenueDetails))
+	}
+
+	body.WriteString("\n⏰ The session starts in approximately 24 hours!\n")
+
+	if sessionInfo.Status == "ON_SALE" {
+		body.WriteString("\n🎫 Don't forget - this session is currently on sale. Make sure you have your tickets ready!\n")
+	} else if sessionInfo.Status == "PENDING" {
+		body.WriteString("\n⏳ This session is still pending. We'll update you if there are any changes.\n")
+	}
+
+	body.WriteString("\n📅 We recommend:")
+	body.WriteString("\n• Set a reminder on your phone")
+	body.WriteString("\n• Check the venue location and directions")
+	body.WriteString("\n• Prepare any required documents or tickets")
+	body.WriteString("\n• Plan your travel time with some buffer")
+
+	body.WriteString("\n\nSee you tomorrow! 🎉")
+	body.WriteString("\n\nBest regards,\nTicketly Team")
+
+	return subject, body.String()
+}
+
+// SessionReminderInfo holds session information for reminder emails
+type SessionReminderInfo struct {
+	SessionID      string
+	EventID        string
+	EventTitle     string
+	StartTime      int64
+	EndTime        int64
+	Status         string
+	VenueDetails   string
+	SessionType    string
+	SalesStartTime int64
+}

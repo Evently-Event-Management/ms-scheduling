@@ -1,5 +1,6 @@
-// internal/scheduler/scheduler.go
-package scheduler
+// internal/eventbridge/scheduler.gopackage eventbridge
+
+package eventbridge
 
 import (
 	"context"
@@ -31,22 +32,43 @@ func NewService(cfg appconfig.Config, schedulerClient *scheduler.Client) *Servic
 	}
 }
 
-// CreateOrUpdateSchedule handles the idempotent logic for creating/updating a schedule.
-func (s *Service) CreateOrUpdateSchedule(sessionID string, scheduleTime time.Time, namePrefix, queueArn, action, logContext string) error {
+// CreateOrUpdateSchedule handles the idempotent logic for creating/updating a standard schedule.
+func (s *Service) CreateOrUpdateSchedule(sessionID string, scheduleTime time.Time, namePrefix, action, logContext string) error {
+	// Create standard message body
+	messageBody := models.SQSMessageBody{
+		SessionID: sessionID,
+		Action:    action,
+	}
+
+	// Use the common scheduling method with the Session Scheduling Queue ARN
+	return s.createOrUpdateScheduleWithPayload(sessionID, scheduleTime, namePrefix, s.Config.SQSSessionSchedulingQueueARN, messageBody, logContext)
+}
+
+// CreateOrUpdateReminderSchedule creates or updates a reminder-specific schedule
+func (s *Service) CreateOrUpdateReminderSchedule(sessionID string, scheduleTime time.Time, namePrefix, action, reminderType, logContext string) error {
+	// Create reminder-specific message body with additional fields
+	messageBody := models.SQSReminderMessageBody{
+		SessionID:      sessionID,
+		Action:         action,
+		ReminderType:   reminderType,
+		TemplateID:     "session-reminder-template",
+		NotificationID: fmt.Sprintf("reminder-%s-%s", reminderType, sessionID),
+	}
+
+	// Use the common scheduling method with the reminder message body
+	return s.createOrUpdateScheduleWithPayload(sessionID, scheduleTime, namePrefix, s.Config.SQSSessionRemindersQueueARN, messageBody, logContext)
+}
+
+// createOrUpdateScheduleWithPayload is a generic method that handles the scheduling logic with any payload
+func (s *Service) createOrUpdateScheduleWithPayload(sessionID string, scheduleTime time.Time, namePrefix, queueArn string, payload interface{}, logContext string) error {
 	scheduleName := namePrefix + sessionID
 	log.Printf("Creating/updating schedule '%s' at time: %s", scheduleName, scheduleTime)
 
 	// Format time for EventBridge Scheduler expression: at(YYYY-MM-DDTHH:mm:ss)
 	scheduleExpression := fmt.Sprintf("at(%s)", scheduleTime.UTC().Format("2006-01-02T15:04:05"))
 
-	// Use the SQSMessageBody struct to ensure consistency between producer and consumer
-	messageBody := models.SQSMessageBody{
-		SessionID: sessionID,
-		Action:    action,
-	}
-
-	// Marshal the struct to JSON
-	inputJSON, err := json.Marshal(messageBody)
+	// Marshal the payload to JSON
+	inputJSON, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("Error marshaling message body to JSON: %v", err)
 		return err

@@ -4,12 +4,6 @@ import (
 	"time"
 )
 
-// SQSMessageBody defines the structure of the message we expect.
-type SQSMessageBody struct {
-	SessionID string `json:"sessionId"`
-	Action    string `json:"action"` // e.g., "ON_SALE", "CLOSED"
-}
-
 // DebeziumEvent represents the structure of a Debezium change event from Kafka
 // for the event_sessions table.
 type DebeziumEvent struct {
@@ -92,3 +86,51 @@ func MicroTimestampToTime(microTs int64) time.Time {
 func TimeToMicroTimestamp(t time.Time) int64 {
 	return t.Unix()*1000000 + int64(t.Nanosecond())/1000
 }
+
+// SessionUpdate represents a Debezium session update event
+type SessionUpdate struct {
+	Before    *EventSession  `json:"before"`
+	After     *EventSession  `json:"after"`
+	Source    DebeziumSource `json:"source"`
+	Operation string         `json:"op"` // "c" (create), "u" (update), "d" (delete)
+	Timestamp int64          `json:"ts_ms"`
+	SessionID string         // Extracted from After.ID or Before.ID
+}
+
+// DebeziumSessionEvent represents the full Debezium event structure for sessions
+type DebeziumSessionEvent struct {
+	Schema  interface{}   `json:"schema"`
+	Payload SessionUpdate `json:"payload"`
+}
+
+// Event represents the events table data in a Debezium event
+type Event struct {
+	ID              string `json:"id"`                         // UUID
+	OrganizationID  string `json:"organization_id"`            // UUID
+	Title           string `json:"title"`                      // Event title
+	Description     string `json:"description,omitempty"`      // Event description
+	Overview        string `json:"overview,omitempty"`         // Event overview
+	Status          string `json:"status"`                     // PENDING, APPROVED, REJECTED, etc.
+	RejectionReason string `json:"rejection_reason,omitempty"` // Reason for rejection
+	CreatedAt       int64  `json:"created_at"`                 // Microsecond timestamp
+	CategoryID      string `json:"category_id,omitempty"`      // UUID
+	UpdatedAt       int64  `json:"updated_at,omitempty"`       // Microsecond timestamp
+}
+
+// EventUpdate represents a Debezium event update event
+type EventUpdate struct {
+	Before    *Event         `json:"before"`
+	After     *Event         `json:"after"`
+	Source    DebeziumSource `json:"source"`
+	Operation string         `json:"op"` // "c" (create), "u" (update), "d" (delete)
+	Timestamp int64          `json:"ts_ms"`
+	EventID   string         // Extracted from After.ID or Before.ID
+}
+
+// DebeziumEventEvent represents the full Debezium event structure for events
+type DebeziumEventEvent struct {
+	Schema  interface{} `json:"schema"`
+	Payload EventUpdate `json:"payload"`
+}
+
+// Note: Subscription models are defined in subscription.go
