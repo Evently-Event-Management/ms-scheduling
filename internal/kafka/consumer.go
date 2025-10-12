@@ -435,8 +435,3 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 		log.Printf("Deleted all schedules (including reminder email) for deleted session %s", before.ID)
 	}
 }
-
-// ProcessSessionChangePublic is a public method to process session changes for testing
-func (c *Consumer) ProcessSessionChangePublic(event models.DebeziumEvent) {
-	c.processSessionChange(event)
-}
