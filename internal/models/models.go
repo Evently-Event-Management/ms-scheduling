@@ -4,12 +4,6 @@ import (
 	"time"
 )
 
-// SQSMessageBody defines the structure of the message we expect.
-type SQSMessageBody struct {
-	SessionID string `json:"sessionId"`
-	Action    string `json:"action"` // e.g., "ON_SALE", "CLOSED"
-}
-
 // DebeziumEvent represents the structure of a Debezium change event from Kafka
 // for the event_sessions table.
 type DebeziumEvent struct {

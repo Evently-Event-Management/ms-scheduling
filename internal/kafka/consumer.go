@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/models"
-	"ms-scheduling/internal/scheduler"
 	"ms-scheduling/internal/services"
 	"strconv"
 
@@ -18,13 +18,13 @@ import (
 // Consumer holds the dependencies for the Kafka consumer.
 type Consumer struct {
 	Reader            *kafka.Reader
-	SchedulerService  *scheduler.Service
+	SchedulerService  *eventbridge.Service
 	SubscriberService *services.SubscriberService
 	Config            appconfig.Config
 }
 
 // NewConsumer creates a new Kafka consumer with the given configuration.
-func NewConsumer(cfg appconfig.Config, kafkaURL, topic string, schedulerService *scheduler.Service, subscriberService *services.SubscriberService) *Consumer {
+func NewConsumer(cfg appconfig.Config, kafkaURL, topic string, schedulerService *eventbridge.Service, subscriberService *services.SubscriberService) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaURL},
 		Topic:   topic,
@@ -64,31 +64,22 @@ func (c *Consumer) ConsumeDebeziumEvents() {
 				continue
 			}
 
-			// Process the session change (scheduling logic)
-			c.processSessionChange(event)
-
-			// Also process session update notification (email logic)
-			c.processSessionUpdateFromDebezium(event)
-
+			c.updateSessionSchedules(event)
+			c.updateSessionNotification(event)
 			continue
 		}
 
 		// Handle event update notifications and Debezium events
 		if msg.Topic == "dbz.ticketly.public.events" {
 			// Process event update notification (email logic)
-			c.processEventUpdateFromDebezium(msg.Value)
-
+			c.processEventNotification(msg.Value)
 			continue
 		}
-
-		// Default fallback for other Debezium events
 		var event models.DebeziumEvent
 		if err := json.Unmarshal(msg.Value, &event); err != nil {
 			log.Printf("Error unmarshalling Debezium event: %v", err)
 			continue
 		}
-
-		c.processSessionChange(event)
 	}
 }
 
@@ -174,8 +165,8 @@ func (c *Consumer) processSessionUpdateNotification(value []byte) {
 	log.Printf("Successfully processed session update notification")
 }
 
-// processSessionUpdateFromDebezium converts a real Debezium event to session update notification format
-func (c *Consumer) processSessionUpdateFromDebezium(event models.DebeziumEvent) {
+// updateSessionNotification converts a real Debezium event to session update notification format
+func (c *Consumer) updateSessionNotification(event models.DebeziumEvent) {
 	log.Printf("Processing session update notification from real Debezium event, operation: %s", event.Payload.Op)
 
 	// Determine session ID for logging
@@ -209,8 +200,8 @@ func (c *Consumer) processSessionUpdateFromDebezium(event models.DebeziumEvent) 
 	log.Printf("Successfully processed session update notification from Debezium event for session %s", sessionID)
 }
 
-// processEventUpdateFromDebezium processes Debezium events for the events table
-func (c *Consumer) processEventUpdateFromDebezium(value []byte) {
+// processEventNotification processes Debezium events for the events table
+func (c *Consumer) processEventNotification(value []byte) {
 	log.Printf("Processing event update notification from Debezium")
 
 	// Parse the raw JSON into a generic structure to extract event data
@@ -272,8 +263,8 @@ func (c *Consumer) processEventUpdateFromDebezium(value []byte) {
 	}
 }
 
-// processSessionChange is the main router for Debezium operations.
-func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
+// updateSessionSchedules is the main router for Debezium operations.
+func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 	sessionID := ""
 	if event.Payload.After != nil {
 		sessionID = event.Payload.After.ID
@@ -292,14 +283,13 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 	case "c": // A new session was created
 		log.Println("Handling create operation...")
 		after := event.Payload.After
-		// Schedule the on-sale job
+		// Schedule the on-sale job using standard scheduler
 		if after.SalesStartTime > 0 {
-			onSaleTime := scheduler.MicrosecondsToTime(after.SalesStartTime)
+			onSaleTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
 				onSaleTime,
 				"session-onsale-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"ON_SALE",
 				"on-sale job",
 			)
@@ -307,14 +297,13 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				log.Printf("Error scheduling on-sale job for session %s: %v", after.ID, err)
 			}
 		}
-		// Schedule the session-closed job
+		// Schedule the session-closed job using standard scheduler
 		if after.EndTime > 0 {
-			closedTime := scheduler.MicrosecondsToTime(after.EndTime)
+			closedTime := eventbridge.MicrosecondsToTime(after.EndTime)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
 				closedTime,
 				"session-closed-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"CLOSED",
 				"closed job",
 			)
@@ -322,20 +311,21 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				log.Printf("Error scheduling closed job for session %s: %v", after.ID, err)
 			}
 		}
-		// Schedule the session reminder email job (1 day before session starts)
+		// Schedule the session reminder email job (1 day before session starts) using reminder-specific scheduler
 		if after.StartTime > 0 {
-			sessionStartTime := scheduler.MicrosecondsToTime(after.StartTime)
+			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
 			// Calculate 1 day before session start time
 			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
 			log.Printf("Scheduling session reminder email for session %s at %s (1 day before session starts)", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
 
-			err := c.SchedulerService.CreateOrUpdateSchedule(
+			// Use the specialized reminder scheduler method
+			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
 				"session-reminder-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"REMINDER_EMAIL",
+				"SESSION_START",
 				"session reminder email job",
 			)
 			if err != nil {
@@ -372,13 +362,12 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 
 		// Check if on-sale time changed
 		if after.SalesStartTime != before.SalesStartTime {
-			onSaleTime := scheduler.MicrosecondsToTime(after.SalesStartTime)
+			onSaleTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
 			log.Printf("Sales start time for session %s changed. Updating schedule.", after.ID)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
 				onSaleTime,
 				"session-onsale-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"ON_SALE",
 				"on-sale job",
 			)
@@ -388,13 +377,12 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 		}
 		// Check if start time changed
 		if after.StartTime != before.StartTime {
-			closedTime := scheduler.MicrosecondsToTime(after.StartTime)
+			closedTime := eventbridge.MicrosecondsToTime(after.StartTime)
 			log.Printf("Start time for session %s changed. Updating schedule.", after.ID)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
 				closedTime,
 				"session-closed-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"CLOSED",
 				"closed job",
 			)
@@ -402,18 +390,19 @@ func (c *Consumer) processSessionChange(event models.DebeziumEvent) {
 				log.Printf("Error updating closed job for session %s: %v", after.ID, err)
 			}
 
-			// Also update the reminder email schedule (1 day before new start time)
-			sessionStartTime := scheduler.MicrosecondsToTime(after.StartTime)
+			// Also update the reminder email schedule (1 day before new start time) using reminder-specific scheduler
+			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
 			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
 			log.Printf("Session start time changed. Updating reminder email schedule for session %s to %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
 
-			err = c.SchedulerService.CreateOrUpdateSchedule(
+			// Use the specialized reminder scheduler method
+			err = c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
 				"session-reminder-",
-				c.Config.SQSSessionSchedulingQueueARN,
 				"REMINDER_EMAIL",
+				"SESSION_START",
 				"session reminder email job",
 			)
 			if err != nil {
