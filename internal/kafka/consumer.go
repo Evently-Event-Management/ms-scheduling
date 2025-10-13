@@ -88,6 +88,7 @@ type OrderCreatedEvent struct {
 	UserID         string  `json:"UserID"`
 	EventID        string  `json:"EventID"`
 	SessionID      string  `json:"SessionID"`
+	OrganizationID string  `json:"OrganizationID"`
 	Status         string  `json:"Status"`
 	SubTotal       float64 `json:"SubTotal"`
 	DiscountID     string  `json:"DiscountID"`
