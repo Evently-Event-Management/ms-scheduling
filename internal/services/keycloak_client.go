@@ -29,6 +29,15 @@ type KeycloakUser struct {
 	Email    string `json:"email"`
 }
 
+// KeycloakUserDetails represents extended user information from Keycloak
+type KeycloakUserDetails struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+}
+
 func NewKeycloakClient(baseURL, realm, clientID, clientSecret string) *KeycloakClient {
 	return &KeycloakClient{
 		BaseURL:      baseURL,
@@ -111,4 +120,41 @@ func (k *KeycloakClient) getAdminToken() (string, error) {
 	}
 
 	return tokenResp.AccessToken, nil
+}
+
+// GetUserDetails fetches extended user information from Keycloak by UserID
+func (k *KeycloakClient) GetUserDetails(userID string) (*KeycloakUserDetails, error) {
+	// Get admin token
+	token, err := k.getAdminToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get admin token: %v", err)
+	}
+
+	// Get user details
+	url := fmt.Sprintf("%s/admin/realms/%s/users/%s", k.BaseURL, k.Realm, userID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := k.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("keycloak API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var userDetails KeycloakUserDetails
+	if err := json.NewDecoder(resp.Body).Decode(&userDetails); err != nil {
+		return nil, err
+	}
+
+	return &userDetails, nil
 }

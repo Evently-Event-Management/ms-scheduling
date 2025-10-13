@@ -8,6 +8,7 @@ import (
 	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/models"
 	"ms-scheduling/internal/services"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 
@@ -292,6 +293,7 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 			if err != nil {
 				log.Printf("Error scheduling on-sale job for session %s: %v", after.ID, err)
 			}
+
 		}
 		// Schedule the session-closed job using standard scheduler
 		if after.EndTime > 0 {
@@ -313,6 +315,9 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 			// Calculate 1 day before session start time
 			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
+			salesStartTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
+			reminderSalesStartTime := salesStartTime.Add(-15 * time.Minute)
+
 			log.Printf("Scheduling session reminder email for session %s at %s (1 day before session starts)", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
 
 			// Use the specialized reminder scheduler method
@@ -324,10 +329,25 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				"SESSION_START",
 				"session reminder email job",
 			)
+
+			err_sale := c.SchedulerService.CreateOrUpdateReminderSchedule(
+				after.ID,
+				reminderSalesStartTime,
+				"session-reminder-",
+				"ONSALE_EMAIL",
+				"SALE_START",
+				"sale reminder email job",
+			)
 			if err != nil {
 				log.Printf("Error scheduling reminder email job for session %s: %v", after.ID, err)
 			} else {
 				log.Printf("Successfully scheduled reminder email for session %s to be sent on %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+			}
+
+			if err_sale != nil {
+				log.Printf("Error scheduling sales reminder email job for session %s: %v", after.ID, err)
+			} else {
+				log.Printf("Successfully scheduled sales reminder email for session %s to be sent on %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
 			}
 		}
 

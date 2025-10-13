@@ -11,10 +11,12 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsscheduler "github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/gorilla/mux"
 
 	auth "ms-scheduling/internal/auth"
 	appconfig "ms-scheduling/internal/config"
 	"ms-scheduling/internal/eventbridge"
+	"ms-scheduling/internal/handlers"
 	"ms-scheduling/internal/kafka"
 	"ms-scheduling/internal/reminder"
 	"ms-scheduling/internal/scheduler"
@@ -148,10 +150,64 @@ func main() {
 		log.Println("Reminder queue URL not configured, skipping reminder processor setup")
 	}
 
-	// Keep the main goroutine alive
-	for {
-		time.Sleep(time.Hour)
+	// Set up the HTTP server for subscription API
+	setupHTTPServer(cfg, subscriberService)
+}
+
+// setupHTTPServer configures and starts the HTTP server
+func setupHTTPServer(cfg appconfig.Config, subscriberService *services.SubscriberService) {
+	router := mux.NewRouter()
+
+	// Create subscription handlers
+	subscriptionHandler := handlers.NewSubscriptionHandler(subscriberService, cfg)
+	sessionSubscriptionHandler := handlers.NewSessionSubscriptionHandler(subscriberService, cfg)
+
+	// Event subscription API routes with authentication
+	eventApiRouter := router.PathPrefix("/api/scheduler/subscription/v1").Subrouter()
+	eventApiRouter.Use(auth.AuthMiddleware)
+
+	// Regular user endpoints for event subscriptions
+	eventApiRouter.HandleFunc("/subscribe", subscriptionHandler.Subscribe).Methods("POST")
+	eventApiRouter.HandleFunc("/unsubscribe/{eventId}", subscriptionHandler.Unsubscribe).Methods("DELETE")
+	eventApiRouter.HandleFunc("/is-subscribed/{eventId}", subscriptionHandler.IsSubscribed).Methods("GET")
+	eventApiRouter.HandleFunc("/user-subscriptions", subscriptionHandler.GetUserSubscriptions).Methods("GET")
+
+	// Admin endpoints for event subscriptions with additional middleware
+	eventAdminRouter := eventApiRouter.PathPrefix("/event-subscribers").Subrouter()
+	eventAdminRouter.Use(auth.AdminMiddleware)
+	eventAdminRouter.HandleFunc("/{eventId}", subscriptionHandler.GetEventSubscribers).Methods("GET")
+
+	// Session subscription API routes with authentication
+	sessionApiRouter := router.PathPrefix("/api/scheduler/session-subscription/v1").Subrouter()
+	sessionApiRouter.Use(auth.AuthMiddleware)
+
+	// Regular user endpoints for session subscriptions
+	sessionApiRouter.HandleFunc("/subscribe", sessionSubscriptionHandler.Subscribe).Methods("POST")
+	sessionApiRouter.HandleFunc("/unsubscribe/{sessionId}", sessionSubscriptionHandler.Unsubscribe).Methods("DELETE")
+	sessionApiRouter.HandleFunc("/is-subscribed/{sessionId}", sessionSubscriptionHandler.IsSubscribed).Methods("GET")
+	sessionApiRouter.HandleFunc("/user-subscriptions", sessionSubscriptionHandler.GetUserSubscriptions).Methods("GET")
+
+	// Admin endpoints for session subscriptions with additional middleware
+	sessionAdminRouter := sessionApiRouter.PathPrefix("/session-subscribers").Subrouter()
+	sessionAdminRouter.Use(auth.AdminMiddleware)
+	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET")
+
+	// Healthcheck endpoint (no authentication required)
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	}).Methods("GET")
+
+	// Start HTTP server
+	serverAddr := cfg.ServerHost + ":" + cfg.ServerPort
+	log.Printf("Starting HTTP server on %s", serverAddr)
+
+	server := &http.Server{
+		Addr:    serverAddr,
+		Handler: router,
 	}
+
+	log.Fatal(server.ListenAndServe())
 }
 
 // testGetUserEmail tests the GetUserEmailByID function with the provided user ID
