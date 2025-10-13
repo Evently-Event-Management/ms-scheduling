@@ -38,6 +38,10 @@ type Config struct {
 	SMTPPassword string
 	FromEmail    string
 	FromName     string
+
+	// HTTP server configuration
+	ServerHost string
+	ServerPort string
 }
 
 // LoadEnv loads environment variables from .env files
@@ -96,6 +100,10 @@ func Load() Config {
 		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
 		FromEmail:    getEnv("FROM_EMAIL", "noreply@ticketly.com"),
 		FromName:     getEnv("FROM_NAME", "Ticketly"),
+
+		// HTTP server configuration
+		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort: getEnv("SERVER_PORT", "8085"),
 	}
 }
 

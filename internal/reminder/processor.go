@@ -119,7 +119,8 @@ func (p *Processor) processReminderMessage(msg *models.SQSReminderMessageBody) e
 		return fmt.Errorf("unknown action in reminder message: %s", msg.Action)
 	}
 
-	log.Printf("Processing reminder email for session %s (type: %s)", msg.SessionID, msg.ReminderType)
+	log.Printf("Processing reminder email for session %s (type: %s, template: %s, notification ID: %s)",
+		msg.SessionID, msg.ReminderType, msg.TemplateID, msg.NotificationID)
 
 	// Process the session reminder through the subscriber service
 	err := p.subscriberService.ProcessSessionReminder(msg.SessionID)
