@@ -24,6 +24,7 @@ type Config struct {
 	EventSessionsKafkaTopic      string
 	OrdersKafkaTopic             string
 	EventsKafkaTopic             string
+	FrontendURL                  string
 	SQSSessionSchedulingQueueURL string
 	SQSSessionSchedulingQueueARN string
 	SQSSessionRemindersQueueURL  string
@@ -98,6 +99,7 @@ func Load() Config {
 		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		OrdersKafkaTopic:             getEnv("ORDERS_KAFKA_TOPIC", "ticketly.order.created"),
 		EventsKafkaTopic:             getEnv("EVENTS_KAFKA_TOPIC", "dbz.ticketly.public.events"),
+		FrontendURL:                  getEnv("FRONTEND_URL", "https://ticketly.dpiyumal.me"),
 
 		// Database configuration
 		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost port=5432 user=postgres password= dbname=ticketly sslmode=disable"),

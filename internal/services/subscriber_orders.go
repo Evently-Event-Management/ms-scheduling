@@ -11,28 +11,25 @@ func (s *SubscriberService) SendOrderConfirmationEmail(subscriber *models.Subscr
 	log.Printf("Sending order email to %s for order %s with status %s", subscriber.SubscriberMail, order.OrderID, order.Status)
 
 	// Determine email template type based on order status
-	var templateType EmailTemplateType
+	var emailType EmailType
 	switch order.Status {
 	case "completed":
-		templateType = OrderConfirmed
+		emailType = EmailOrderConfirmed
 	case "pending":
-		templateType = OrderPending
+		emailType = EmailOrderPending
 	case "cancelled":
-		templateType = OrderCancelled
+		emailType = EmailOrderCancelled
 	case "processing":
-		templateType = OrderProcessing
+		emailType = EmailOrderProcessing
 	default:
-		templateType = OrderPending // Default to pending if status is unknown
+		emailType = EmailOrderPending // Default to pending if status is unknown
 	}
 
-	// Generate HTML content
-	emailContent := GenerateHTMLEmailTemplate(templateType, order)
-
-	// Get email subject
-	subject := GetEmailSubject(templateType, order.OrderID)
+	// Generate email using our new template system
+	emailTemplate := GenerateEmailTemplate(s.Config, emailType, order)
 
 	// Send the email
-	return s.EmailService.SendEmail(subscriber.SubscriberMail, subject, emailContent)
+	return s.EmailService.SendEmail(subscriber.SubscriberMail, emailTemplate.Subject, emailTemplate.HTML)
 }
 
 // OrderCreatedEvent represents the structure of the order.created Kafka event

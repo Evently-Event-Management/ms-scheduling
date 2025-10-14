@@ -101,7 +101,7 @@ func main() {
 	emailService := services.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.FromEmail, cfg.FromName)
 
 	// Initialize subscriber service
-	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService)
+	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService, &cfg)
 
 	// Start Kafka consumers in separate goroutines if Kafka URL is configured
 	if cfg.KafkaURL != "" {
