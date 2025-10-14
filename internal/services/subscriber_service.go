@@ -12,10 +12,11 @@ import (
 func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
 	log.Printf("Sending generic session reminder emails to %d subscribers", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildSessionReminderEmail(subscriber, sessionInfo)
+	// Generate email template using our new template system
+	emailTemplate := generateSessionStartReminderEmail(s.Config, sessionInfo)
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	for _, subscriber := range subscribers {
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, emailTemplate.Subject, emailTemplate.HTML)
 		if err != nil {
 			log.Printf("Error sending session reminder email to %s: %v", subscriber.SubscriberMail, err)
 			// Continue with other subscribers even if one fails
@@ -32,10 +33,11 @@ func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subsc
 func (s *SubscriberService) SendSessionStartReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
 	log.Printf("Sending session START reminder emails to %d subscribers (1 day before)", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildSessionStartReminderEmail(subscriber, sessionInfo)
+	// Generate email template using our new template system
+	emailTemplate := generateSessionStartReminderEmail(s.Config, sessionInfo)
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	for _, subscriber := range subscribers {
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, emailTemplate.Subject, emailTemplate.HTML)
 		if err != nil {
 			log.Printf("Error sending session start reminder email to %s: %v", subscriber.SubscriberMail, err)
 			// Continue with other subscribers even if one fails
@@ -52,10 +54,11 @@ func (s *SubscriberService) SendSessionStartReminderEmails(subscribers []models.
 func (s *SubscriberService) SendSessionSalesReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
 	log.Printf("Sending session SALES reminder emails to %d subscribers", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildSessionSalesReminderEmail(subscriber, sessionInfo)
+	// Generate email template using our new template system
+	emailTemplate := generateSessionSalesReminderEmail(s.Config, sessionInfo)
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	for _, subscriber := range subscribers {
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, emailTemplate.Subject, emailTemplate.HTML)
 		if err != nil {
 			log.Printf("Error sending sales start reminder email to %s: %v", subscriber.SubscriberMail, err)
 			// Continue with other subscribers even if one fails
@@ -68,6 +71,8 @@ func (s *SubscriberService) SendSessionSalesReminderEmails(subscribers []models.
 	return nil
 }
 
+// Note: This function is being deprecated in favor of email templates in email_common_templates.go
+// TODO: Update SendSessionReminderEmails to use GenerateEmailTemplate instead
 // buildSessionReminderEmail creates the email content for session reminders
 func (s *SubscriberService) buildSessionReminderEmail(subscriber models.Subscriber, sessionInfo *SessionReminderInfo) (string, string) {
 	// Convert timestamps to readable format
