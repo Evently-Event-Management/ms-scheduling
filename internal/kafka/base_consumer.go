@@ -17,6 +17,15 @@ type BaseConsumer struct {
 
 // NewBaseConsumer creates a new base consumer with the given configuration
 func NewBaseConsumer(cfg config.Config, kafkaURL, topic string) *BaseConsumer {
+	// If topic is empty, return a consumer with nil reader
+	if topic == "" || kafkaURL == "" {
+		log.Println("Empty Kafka topic or URL provided, skipping consumer creation")
+		return &BaseConsumer{
+			Reader: nil,
+			Config: cfg,
+		}
+	}
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{kafkaURL},
 		Topic:   topic,

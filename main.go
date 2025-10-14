@@ -123,20 +123,18 @@ func main() {
 		}
 
 		// Start orders consumer if any order topic is configured
-		if cfg.OrdersKafkaTopic != "" || cfg.OrdersUpdatedKafkaTopic != "" || cfg.OrdersCancelledKafkaTopic != "" {
-			log.Printf("Starting orders consumer for topics (created: %s, updated: %s, cancelled: %s) at %s",
-				cfg.OrdersKafkaTopic, cfg.OrdersUpdatedKafkaTopic, cfg.OrdersCancelledKafkaTopic, cfg.KafkaURL)
-			orderConsumer := kafka.NewOrderConsumer(cfg, subscriberService)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if err := orderConsumer.StartConsuming(ctx); err != nil {
-					log.Printf("Error in order consumer: %v", err)
-				}
-			}()
-		}
-
-		// Start events consumer if topic is configured
+		// We'll always create the consumer (it checks for empty topics internally)
+		// but only log the actual topics that are configured
+		log.Printf("Starting orders consumer for topics (created: %s, updated: %s, cancelled: %s) at %s",
+			cfg.OrdersKafkaTopic, cfg.OrdersUpdatedKafkaTopic, cfg.OrdersCancelledKafkaTopic, cfg.KafkaURL)
+		orderConsumer := kafka.NewOrderConsumer(cfg, subscriberService)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := orderConsumer.StartConsuming(ctx); err != nil {
+				log.Printf("Error in order consumer: %v", err)
+			}
+		}() // Start events consumer if topic is configured
 		if cfg.EventsKafkaTopic != "" {
 			log.Printf("Starting events consumer for topic %s at %s", cfg.EventsKafkaTopic, cfg.KafkaURL)
 			eventConsumer := kafka.NewEventConsumer(cfg, subscriberService)

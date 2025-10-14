@@ -28,16 +28,8 @@ RUN adduser -D -H -h /app appuser
 # Set the working directory
 WORKDIR /app
 
-# Environment variables with default values
-ENV AWS_REGION="ap-south-1" \
-    EVENT_SERVICE_URL="http://localhost:8081/api/event-seating" \
-    KEYCLOAK_URL="http://auth.ticketly.com:8080" \
-    KEYCLOAK_REALM="event-ticketing" \
-    KEYCLOAK_CLIENT_ID="scheduler-service-client" \
-    KAFKA_URL="" \
-    EVENT_SESSIONS_KAFKA_TOPIC="" \
-    ORDERS_KAFKA_TOPIC="" \
-    EVENTS_KAFKA_TOPIC=""
+# Environment variables will be supplied at runtime
+# Defaults are managed in the Go application's config.go file
 
 # Copy the built binary from the builder stage
 COPY --from=builder /scheduler-service .

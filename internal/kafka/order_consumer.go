@@ -20,39 +20,62 @@ type OrderConsumer struct {
 
 // NewOrderConsumer creates a new consumer for order events
 func NewOrderConsumer(cfg config.Config, subscriberService *services.SubscriberService) *OrderConsumer {
-	createdConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersKafkaTopic)
-	updatedConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersUpdatedKafkaTopic)
-	cancelledConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersCancelledKafkaTopic)
-
-	return &OrderConsumer{
-		CreatedConsumer:   *createdConsumer,
-		UpdatedConsumer:   *updatedConsumer,
-		CancelledConsumer: *cancelledConsumer,
+	result := &OrderConsumer{
 		SubscriberService: subscriberService,
 	}
+
+	// Only create consumers for non-empty topics
+	if cfg.OrdersKafkaTopic != "" {
+		createdConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersKafkaTopic)
+		result.CreatedConsumer = *createdConsumer
+	}
+
+	if cfg.OrdersUpdatedKafkaTopic != "" {
+		updatedConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersUpdatedKafkaTopic)
+		result.UpdatedConsumer = *updatedConsumer
+	}
+
+	if cfg.OrdersCancelledKafkaTopic != "" {
+		cancelledConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersCancelledKafkaTopic)
+		result.CancelledConsumer = *cancelledConsumer
+	}
+
+	return result
 }
 
 // StartConsuming starts consuming order events
 func (c *OrderConsumer) StartConsuming(ctx context.Context) error {
-	// Start a goroutine for each topic
+	// Start a goroutine for each configured topic
+
+	// Check if we have any consumers configured
+	if c.CreatedConsumer.Reader == nil && c.UpdatedConsumer.Reader == nil && c.CancelledConsumer.Reader == nil {
+		log.Println("No order Kafka topics configured, skipping order consumer setup")
+		return nil
+	}
 
 	// Created orders
-	go func() {
-		log.Printf("Starting order created consumer for topic %s", c.CreatedConsumer.Reader.Config().Topic)
-		c.CreatedConsumer.ConsumeMessages(ctx, c.processOrderCreated)
-	}()
+	if c.CreatedConsumer.Reader != nil {
+		go func() {
+			log.Printf("Starting order created consumer for topic %s", c.CreatedConsumer.Reader.Config().Topic)
+			c.CreatedConsumer.ConsumeMessages(ctx, c.processOrderCreated)
+		}()
+	}
 
 	// Updated orders
-	go func() {
-		log.Printf("Starting order updated consumer for topic %s", c.UpdatedConsumer.Reader.Config().Topic)
-		c.UpdatedConsumer.ConsumeMessages(ctx, c.processOrderUpdated)
-	}()
+	if c.UpdatedConsumer.Reader != nil {
+		go func() {
+			log.Printf("Starting order updated consumer for topic %s", c.UpdatedConsumer.Reader.Config().Topic)
+			c.UpdatedConsumer.ConsumeMessages(ctx, c.processOrderUpdated)
+		}()
+	}
 
 	// Cancelled orders
-	go func() {
-		log.Printf("Starting order cancelled consumer for topic %s", c.CancelledConsumer.Reader.Config().Topic)
-		c.CancelledConsumer.ConsumeMessages(ctx, c.processOrderCancelled)
-	}()
+	if c.CancelledConsumer.Reader != nil {
+		go func() {
+			log.Printf("Starting order cancelled consumer for topic %s", c.CancelledConsumer.Reader.Config().Topic)
+			c.CancelledConsumer.ConsumeMessages(ctx, c.processOrderCancelled)
+		}()
+	}
 
 	return nil
 }
