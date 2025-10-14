@@ -123,10 +123,10 @@ func Load() Config {
 }
 
 func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
+	if value, ok := os.LookupEnv(key); ok && value != "" {
 		log.Printf("Loaded env var %s: %s", key, value)
 		return value
 	}
-	log.Printf("Env var %s not set, using fallback: %s", key, fallback)
+	log.Printf("Env var %s not set or empty, using fallback: %s", key, fallback)
 	return fallback
 }
