@@ -156,7 +156,7 @@ func (c *SessionConsumer) updateSessionSchedules(event models.DebeziumEvent) {
 			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
-				"session-reminder-",
+				"session-start-reminder-",
 				"SESSION_START",
 				"session reminder email job",
 			)
@@ -164,7 +164,7 @@ func (c *SessionConsumer) updateSessionSchedules(event models.DebeziumEvent) {
 			err_sale := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderSalesStartTime,
-				"session-reminder-",
+				"sale-start-reminder-",
 				"SALE_START",
 				"sale reminder email job",
 			)
@@ -192,7 +192,8 @@ func (c *SessionConsumer) updateSessionSchedules(event models.DebeziumEvent) {
 			log.Printf("Session %s was cancelled. Deleting schedules.", after.ID)
 			c.SchedulerService.DeleteSchedule(after.ID, "session-onsale-")
 			c.SchedulerService.DeleteSchedule(after.ID, "session-closed-")
-			c.SchedulerService.DeleteSchedule(after.ID, "session-reminder-")
+			c.SchedulerService.DeleteSchedule(after.ID, "session-start-reminder-")
+			c.SchedulerService.DeleteSchedule(after.ID, "sale-start-reminder-")
 			log.Printf("Deleted all schedules (including reminder email) for cancelled session %s", after.ID)
 			return
 		}
@@ -230,7 +231,7 @@ func (c *SessionConsumer) updateSessionSchedules(event models.DebeziumEvent) {
 			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
-				"session-reminder-",
+				"session-start-reminder-",
 				"SESSION_START",
 				"session reminder email job",
 			)
@@ -262,7 +263,8 @@ func (c *SessionConsumer) updateSessionSchedules(event models.DebeziumEvent) {
 		}
 		c.SchedulerService.DeleteSchedule(before.ID, "session-onsale-")
 		c.SchedulerService.DeleteSchedule(before.ID, "session-closed-")
-		c.SchedulerService.DeleteSchedule(before.ID, "session-reminder-")
+		c.SchedulerService.DeleteSchedule(before.ID, "session-start-reminder-")
+		c.SchedulerService.DeleteSchedule(before.ID, "sale-start-reminder-")
 		log.Printf("Deleted all schedules (including reminder email) for deleted session %s", before.ID)
 	}
 }

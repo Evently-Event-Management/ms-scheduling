@@ -212,7 +212,7 @@ func (p *Processor) prepareSessionReminderData(sessionID string) ([]models.Subsc
 			sessionInfo.EventTitle = eventDetails.Title
 		case errors.Is(err, errResourceNotFound):
 			log.Printf("Event %s not found while preparing reminder for session %s", sessionInfo.EventID, sessionID)
-		case err != nil:
+		default:
 			log.Printf("Warning: Could not fetch event title for event %s: %v", sessionInfo.EventID, err)
 		}
 	}
