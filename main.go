@@ -102,6 +102,8 @@ func main() {
 
 	// Initialize subscriber service
 	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService)
+	// Set the event query service URL
+	subscriberService.EventQueryService = cfg.EventQueryServiceURL
 
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
 	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
