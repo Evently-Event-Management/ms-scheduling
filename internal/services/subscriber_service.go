@@ -789,14 +789,70 @@ func (s *SubscriberService) buildEventCreationEmail(subscriber models.Subscriber
 	return subject, body.String()
 }
 
-// ProcessSessionReminder handles session reminder email notifications (1 day before session)
+// ProcessSessionReminder handles generic session reminder email notifications
+// This is the legacy method that can handle any type of reminder
 func (s *SubscriberService) ProcessSessionReminder(sessionID string) error {
-	log.Printf("Processing session reminder email for session ID: %s", sessionID)
+	log.Printf("Processing generic session reminder email for session ID: %s", sessionID)
 
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
+	if err != nil {
+		return err
+	}
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s reminder", sessionID)
+		return nil
+	}
+
+	// Send reminder emails
+	return s.SendSessionReminderEmails(allSubscribers, sessionDetails)
+}
+
+// ProcessSessionStartReminder handles session start reminder email notifications (1 day before session)
+func (s *SubscriberService) ProcessSessionStartReminder(sessionID string) error {
+	log.Printf("Processing session START reminder email for session ID: %s (1 day before)", sessionID)
+
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
+	if err != nil {
+		return err
+	}
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s start reminder", sessionID)
+		return nil
+	}
+
+	// Send session start reminder emails with specific template
+	return s.SendSessionStartReminderEmails(allSubscribers, sessionDetails)
+}
+
+// ProcessSessionSaleReminder handles session on-sale reminder email notifications (30 min before sales start)
+func (s *SubscriberService) ProcessSessionSaleReminder(sessionID string) error {
+	log.Printf("Processing session ON-SALE reminder email for session ID: %s", sessionID)
+
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
+	if err != nil {
+		return err
+	}
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s sales reminder", sessionID)
+		return nil
+	}
+
+	// Send sales start reminder emails with specific template
+	return s.SendSessionSalesReminderEmails(allSubscribers, sessionDetails)
+}
+
+// Helper function to avoid code duplication in the reminder processors
+func (s *SubscriberService) getSubscribersAndSessionDetails(sessionID string) ([]models.Subscriber, *SessionReminderInfo, error) {
 	// Get all subscribers for this session
 	sessionSubscribers, err := s.GetSessionSubscribers(sessionID)
 	if err != nil {
-		return fmt.Errorf("error getting session subscribers: %w", err)
+		return nil, nil, fmt.Errorf("error getting session subscribers: %w", err)
 	}
 
 	// Get session details (we need event ID to also get event subscribers)
@@ -817,21 +873,13 @@ func (s *SubscriberService) ProcessSessionReminder(sessionID string) error {
 	// Combine and deduplicate subscribers
 	allSubscribers := s.combineAndDeduplicateSubscribers(sessionSubscribers, eventSubscribers)
 
-	if len(allSubscribers) == 0 {
-		log.Printf("No subscribers found for session %s reminder", sessionID)
-		return nil
-	}
-
-	log.Printf("Found %d unique subscribers for session %s reminder", len(allSubscribers), sessionID)
-
 	// Get session details for email content
 	sessionDetails, err := s.getSessionDetails(sessionID)
 	if err != nil {
-		return fmt.Errorf("error getting session details: %w", err)
+		return nil, nil, fmt.Errorf("error getting session details: %w", err)
 	}
 
-	// Send reminder emails
-	return s.SendSessionReminderEmails(allSubscribers, sessionDetails)
+	return allSubscribers, sessionDetails, nil
 }
 
 // getEventIDFromSession retrieves the event ID associated with a session
@@ -936,9 +984,9 @@ func (s *SubscriberService) combineAndDeduplicateSubscribers(sessionSubs, eventS
 	return result
 }
 
-// SendSessionReminderEmails sends reminder emails to all subscribers
+// SendSessionReminderEmails sends generic reminder emails to all subscribers
 func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
-	log.Printf("Sending session reminder emails to %d subscribers", len(subscribers))
+	log.Printf("Sending generic session reminder emails to %d subscribers", len(subscribers))
 
 	for _, subscriber := range subscribers {
 		subject, body := s.buildSessionReminderEmail(subscriber, sessionInfo)
@@ -951,6 +999,46 @@ func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subsc
 		}
 
 		log.Printf("Session reminder email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// SendSessionStartReminderEmails sends session start reminder emails (1 day before)
+func (s *SubscriberService) SendSessionStartReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
+	log.Printf("Sending session START reminder emails to %d subscribers (1 day before)", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionStartReminderEmail(subscriber, sessionInfo)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending session start reminder email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Session start reminder email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// SendSessionSalesReminderEmails sends sales start reminder emails (30 min before)
+func (s *SubscriberService) SendSessionSalesReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
+	log.Printf("Sending session SALES reminder emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionSalesReminderEmail(subscriber, sessionInfo)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending sales start reminder email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Sales start reminder email sent successfully to: %s", subscriber.SubscriberMail)
 	}
 
 	return nil

@@ -115,20 +115,27 @@ func (p *Processor) ProcessMessages(ctx context.Context) error {
 
 // processReminderMessage handles sending emails for session reminders
 func (p *Processor) processReminderMessage(msg *models.SQSReminderMessageBody) error {
-	if msg.Action != "REMINDER_EMAIL" {
-		return fmt.Errorf("unknown action in reminder message: %s", msg.Action)
+	// Validate message basics
+	if msg.SessionID == "" {
+		log.Printf("Reminder message has empty SessionID, skipping: %+v", msg)
+		return nil // Return nil to delete the message from queue
 	}
 
 	log.Printf("Processing reminder email for session %s (type: %s, template: %s, notification ID: %s)",
 		msg.SessionID, msg.ReminderType, msg.TemplateID, msg.NotificationID)
 
-	// Process the session reminder through the subscriber service
-	err := p.subscriberService.ProcessSessionReminder(msg.SessionID)
-	if err != nil {
-		log.Printf("Error sending reminder emails for session %s: %v", msg.SessionID, err)
-		return err
-	}
+	// Handle based solely on ReminderType
+	switch msg.ReminderType {
+	case "SESSION_START":
+		// Session start reminder (1 day before)
+		return p.subscriberService.ProcessSessionStartReminder(msg.SessionID)
 
-	log.Printf("Successfully sent reminder emails for session %s", msg.SessionID)
-	return nil
+	case "SALE_START":
+		// Session on sale reminder (30 mins before sales start)
+		return p.subscriberService.ProcessSessionSaleReminder(msg.SessionID)
+	default:
+		// For unknown reminder types, log and delete from queue (return nil)
+		log.Printf("Unknown reminder type: %s, skipping. Full message: %+v", msg.ReminderType, msg)
+		return nil
+	}
 }

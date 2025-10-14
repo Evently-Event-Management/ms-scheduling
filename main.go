@@ -215,7 +215,7 @@ func setupHTTPServer(cfg appconfig.Config, subscriberService *services.Subscribe
 	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET")
 
 	// Healthcheck endpoint (no authentication required)
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/api/scheduler/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}).Methods("GET")

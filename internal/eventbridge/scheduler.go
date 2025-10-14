@@ -45,11 +45,10 @@ func (s *Service) CreateOrUpdateSchedule(sessionID string, scheduleTime time.Tim
 }
 
 // CreateOrUpdateReminderSchedule creates or updates a reminder-specific schedule
-func (s *Service) CreateOrUpdateReminderSchedule(sessionID string, scheduleTime time.Time, namePrefix, action, reminderType, logContext string) error {
-	// Create reminder-specific message body with additional fields
+func (s *Service) CreateOrUpdateReminderSchedule(sessionID string, scheduleTime time.Time, namePrefix, reminderType, logContext string) error {
+	// Create reminder-specific message body with only necessary fields
 	messageBody := models.SQSReminderMessageBody{
 		SessionID:      sessionID,
-		Action:         action,
 		ReminderType:   reminderType,
 		TemplateID:     "session-reminder-template",
 		NotificationID: fmt.Sprintf("reminder-%s-%s", reminderType, sessionID),

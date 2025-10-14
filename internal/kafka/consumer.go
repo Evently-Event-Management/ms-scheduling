@@ -316,16 +316,16 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
 			salesStartTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
-			reminderSalesStartTime := salesStartTime.Add(-15 * time.Minute)
+			reminderSalesStartTime := salesStartTime.Add(-30 * time.Minute)
 
 			log.Printf("Scheduling session reminder email for session %s at %s (1 day before session starts)", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+			log.Printf("Scheduling sales reminder email for session %s at %s (30 minutes before sales start)", after.ID, reminderSalesStartTime.Format("2006-01-02 15:04:05"))
 
-			// Use the specialized reminder scheduler method
+			// Use the specialized reminder scheduler method with simplified parameters
 			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
 				reminderTime,
 				"session-reminder-",
-				"REMINDER_EMAIL",
 				"SESSION_START",
 				"session reminder email job",
 			)
@@ -334,7 +334,6 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				after.ID,
 				reminderSalesStartTime,
 				"session-reminder-",
-				"ONSALE_EMAIL",
 				"SALE_START",
 				"sale reminder email job",
 			)
@@ -345,9 +344,9 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 			}
 
 			if err_sale != nil {
-				log.Printf("Error scheduling sales reminder email job for session %s: %v", after.ID, err)
+				log.Printf("Error scheduling sales reminder email job for session %s: %v", after.ID, err_sale)
 			} else {
-				log.Printf("Successfully scheduled sales reminder email for session %s to be sent on %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+				log.Printf("Successfully scheduled sales reminder email for session %s to be sent on %s", after.ID, reminderSalesStartTime.Format("2006-01-02 15:04:05"))
 			}
 		}
 
@@ -404,7 +403,6 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				after.ID,
 				reminderTime,
 				"session-reminder-",
-				"REMINDER_EMAIL",
 				"SESSION_START",
 				"session reminder email job",
 			)
