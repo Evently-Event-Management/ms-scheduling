@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsscheduler "github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -43,7 +44,28 @@ func main() {
 		testGetUserEmail(cfg, httpClient, *testUserID)
 		return
 	}
-	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithRegion(cfg.AWSRegion))
+
+	// Load AWS configuration with credentials from environment variables
+	awsOptions := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithRegion(cfg.AWSRegion),
+	}
+
+	// Add credentials if they are provided
+	if cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
+		log.Println("Using AWS credentials from environment variables")
+		awsOptions = append(awsOptions, awsconfig.WithCredentialsProvider(
+			aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     cfg.AWSAccessKeyID,
+					SecretAccessKey: cfg.AWSSecretAccessKey,
+				}, nil
+			}),
+		))
+	} else {
+		log.Println("No AWS credentials provided in environment variables, falling back to default credentials")
+	}
+
+	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsOptions...)
 	if err != nil {
 		log.Fatalf("unable to load AWS SDK config, %v", err)
 	}

@@ -11,6 +11,8 @@ import (
 type Config struct {
 	AWSRegion                    string
 	AWSEndpoint                  string
+	AWSAccessKeyID               string
+	AWSSecretAccessKey           string
 	EventServiceURL              string
 	EventQueryServiceURL         string
 	KeycloakURL                  string
@@ -73,6 +75,8 @@ func Load() Config {
 	return Config{
 		AWSRegion:                    getEnv("AWS_REGION", "ap-south-1"),
 		AWSEndpoint:                  getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
+		AWSAccessKeyID:               getEnv("AWS_ACCESS_KEY_ID", ""),
+		AWSSecretAccessKey:           getEnv("AWS_SECRET_ACCESS_KEY", ""),
 		EventServiceURL:              getEnv("EVENT_SERVICE_URL", "http://localhost:8081/api/event-seating"),
 		EventQueryServiceURL:         getEnv("EVENT_QUERY_SERVICE_URL", "http://localhost:8082/api/event-query"),
 		KeycloakURL:                  getEnv("KEYCLOAK_URL", "http://auth.ticketly.com:8080"),
