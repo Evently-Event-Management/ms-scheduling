@@ -127,7 +127,12 @@ func (p *Processor) ProcessMessages(ctx context.Context) error {
 
 // processSessionMessage makes the API call to the Event Service to update the session status
 func (p *Processor) processSessionMessage(token string, msg *models.SQSMessageBody) error {
+
 	var apiPath string
+	if msg.SessionID == "" || msg.Action == "" {
+		log.Printf("SessionID or Action is empty/null in message: %+v. Consuming message gracefully.", msg)
+		return nil
+	}
 
 	switch msg.Action {
 	case "ON_SALE":

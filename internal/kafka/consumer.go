@@ -130,16 +130,8 @@ func (c *Consumer) processOrderCreated(value []byte) {
 	}
 
 	// Add subscription to the event and session
-	err = c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID)
-	if err != nil {
-		log.Printf("Error adding event subscription for user %s to event %s: %v", order.UserID, order.EventID, err)
-		return
-	}
-	err = c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID)
-	if err != nil {
-		log.Printf("Error adding session subscription for user %s to session %s: %v", order.UserID, order.SessionID, err)
-		return
-	}
+	c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID)
+	c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID)
 
 	// Send order confirmation email
 	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
@@ -288,31 +280,8 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 	case "c": // A new session was created
 		log.Println("Handling create operation...")
 		after := event.Payload.After
-
-		// Time-related schedules grouped together
-		if after.StartTime > 0 {
-			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
-			// Session reminder (1 day before session)
-			reminderTime := sessionStartTime.AddDate(0, 0, -1)
-			log.Printf("Scheduling session reminder email for session %s at %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
-
-			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
-				after.ID,
-				reminderTime,
-				"session-reminder-",
-				"REMINDER_EMAIL",
-				"SESSION_START",
-				"session reminder email job",
-			)
-			if err != nil {
-				log.Printf("Error scheduling reminder email job for session %s: %v", after.ID, err)
-			} else {
-				log.Printf("Successfully scheduled reminder email for session %s", after.ID)
-			}
-		}
-
+		// Schedule the on-sale job using standard scheduler
 		if after.SalesStartTime > 0 {
-			// On-sale job
 			onSaleTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
@@ -325,25 +294,9 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				log.Printf("Error scheduling on-sale job for session %s: %v", after.ID, err)
 			}
 
-			// Sales reminder (15 minutes before sales start)
-			reminderSalesStartTime := onSaleTime.Add(-15 * time.Minute)
-			err_sale := c.SchedulerService.CreateOrUpdateReminderSchedule(
-				after.ID,
-				reminderSalesStartTime,
-				"session-reminder-",
-				"ONSALE_EMAIL",
-				"SALE_START",
-				"sale reminder email job",
-			)
-			if err_sale != nil {
-				log.Printf("Error scheduling sales reminder email job for session %s: %v", after.ID, err)
-			} else {
-				log.Printf("Successfully scheduled sales reminder email for session %s", after.ID)
-			}
 		}
-
+		// Schedule the session-closed job using standard scheduler
 		if after.EndTime > 0 {
-			// Session-closed job
 			closedTime := eventbridge.MicrosecondsToTime(after.EndTime)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
 				after.ID,
@@ -356,54 +309,74 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 				log.Printf("Error scheduling closed job for session %s: %v", after.ID, err)
 			}
 		}
+		// Schedule the session reminder email job (1 day before session starts) using reminder-specific scheduler
+		if after.StartTime > 0 {
+			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
+			// Calculate 1 day before session start time
+			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
+
+			salesStartTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
+			reminderSalesStartTime := salesStartTime.Add(-30 * time.Minute)
+
+			log.Printf("Scheduling session reminder email for session %s at %s (1 day before session starts)", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+			log.Printf("Scheduling sales reminder email for session %s at %s (30 minutes before sales start)", after.ID, reminderSalesStartTime.Format("2006-01-02 15:04:05"))
+
+			// Use the specialized reminder scheduler method with simplified parameters
+			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
+				after.ID,
+				reminderTime,
+				"session-reminder-",
+				"SESSION_START",
+				"session reminder email job",
+			)
+
+			err_sale := c.SchedulerService.CreateOrUpdateReminderSchedule(
+				after.ID,
+				reminderSalesStartTime,
+				"session-reminder-",
+				"SALE_START",
+				"sale reminder email job",
+			)
+			if err != nil {
+				log.Printf("Error scheduling reminder email job for session %s: %v", after.ID, err)
+			} else {
+				log.Printf("Successfully scheduled reminder email for session %s to be sent on %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+			}
+
+			if err_sale != nil {
+				log.Printf("Error scheduling sales reminder email job for session %s: %v", after.ID, err_sale)
+			} else {
+				log.Printf("Successfully scheduled sales reminder email for session %s to be sent on %s", after.ID, reminderSalesStartTime.Format("2006-01-02 15:04:05"))
+			}
+		}
 
 	case "u": // A session was updated
 		log.Println("Handling update operation...")
 		before, after := event.Payload.Before, event.Payload.After
-
+		log.Printf("Before: %+v", before)
+		log.Printf("After: %+v", after)
 		// Sanity check
 		if before == nil || after == nil {
 			return
 		}
 
-		// Handle cancellations first as a special case
-		if after.Status == "CANCELLED" {
-			if before.Status != "CANCELLED" {
-				log.Printf("Session %s was cancelled. Deleting schedules.", after.ID)
-				c.SchedulerService.DeleteSchedule(after.ID, "session-onsale-")
-				c.SchedulerService.DeleteSchedule(after.ID, "session-closed-")
-				c.SchedulerService.DeleteSchedule(after.ID, "session-reminder-")
-				log.Printf("Deleted all schedules for cancelled session %s", after.ID)
-			} else {
-				log.Printf("Session %s was already cancelled. No further scheduling actions will be taken.", after.ID)
-			}
+		// If status changed to CANCELLED, delete schedules
+		if after.Status == "CANCELLED" && before.Status != "CANCELLED" {
+			log.Printf("Session %s was cancelled. Deleting schedules.", after.ID)
+			c.SchedulerService.DeleteSchedule(after.ID, "session-onsale-")
+			c.SchedulerService.DeleteSchedule(after.ID, "session-closed-")
+			c.SchedulerService.DeleteSchedule(after.ID, "session-reminder-")
+			log.Printf("Deleted all schedules (including reminder email) for cancelled session %s", after.ID)
 			return
 		}
 
-		// Time-related updates grouped together
-		if after.StartTime != before.StartTime {
-			// Update reminder email schedule
-			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
-			reminderTime := sessionStartTime.AddDate(0, 0, -1)
-
-			log.Printf("Session start time changed. Updating reminder email schedule for session %s", after.ID)
-			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
-				after.ID,
-				reminderTime,
-				"session-reminder-",
-				"REMINDER_EMAIL",
-				"SESSION_START",
-				"session reminder email job",
-			)
-			if err != nil {
-				log.Printf("Error updating reminder email job for session %s: %v", after.ID, err)
-			} else {
-				log.Printf("Successfully updated reminder email schedule for session %s", after.ID)
-			}
+		if after.Status == "CANCELLED" {
+			log.Printf("Session %s was cancelled. No further scheduling actions will be taken.", after.ID)
+			return
 		}
 
+		// Check if on-sale time changed
 		if after.SalesStartTime != before.SalesStartTime {
-			// Update on-sale job
 			onSaleTime := eventbridge.MicrosecondsToTime(after.SalesStartTime)
 			log.Printf("Sales start time for session %s changed. Updating schedule.", after.ID)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
@@ -416,24 +389,31 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 			if err != nil {
 				log.Printf("Error updating on-sale job for session %s: %v", after.ID, err)
 			}
+		}
+		// Check if start time changed
+		if after.StartTime != before.StartTime {
+			// Update the reminder email schedule (1 day before new start time) using reminder-specific scheduler
+			sessionStartTime := eventbridge.MicrosecondsToTime(after.StartTime)
+			reminderTime := sessionStartTime.AddDate(0, 0, -1) // Subtract 1 day
 
-			// Update sales reminder
-			reminderSalesStartTime := onSaleTime.Add(-15 * time.Minute)
-			err = c.SchedulerService.CreateOrUpdateReminderSchedule(
+			log.Printf("Session start time changed. Updating reminder email schedule for session %s to %s", after.ID, reminderTime.Format("2006-01-02 15:04:05"))
+
+			// Use the specialized reminder scheduler method
+			err := c.SchedulerService.CreateOrUpdateReminderSchedule(
 				after.ID,
-				reminderSalesStartTime,
+				reminderTime,
 				"session-reminder-",
-				"ONSALE_EMAIL",
-				"SALE_START",
-				"sale reminder email job",
+				"SESSION_START",
+				"session reminder email job",
 			)
 			if err != nil {
-				log.Printf("Error updating sales reminder email job for session %s: %v", after.ID, err)
+				log.Printf("Error updating reminder email job for session %s: %v", after.ID, err)
+			} else {
+				log.Printf("Successfully updated reminder email schedule for session %s", after.ID)
 			}
 		}
 
 		if after.EndTime != before.EndTime {
-			// Update session-closed job
 			closedTime := eventbridge.MicrosecondsToTime(after.EndTime)
 			log.Printf("End time for session %s changed. Updating schedule.", after.ID)
 			err := c.SchedulerService.CreateOrUpdateSchedule(
@@ -454,10 +434,9 @@ func (c *Consumer) updateSessionSchedules(event models.DebeziumEvent) {
 		if before == nil {
 			return
 		}
-		// Delete all schedules at once
 		c.SchedulerService.DeleteSchedule(before.ID, "session-onsale-")
 		c.SchedulerService.DeleteSchedule(before.ID, "session-closed-")
 		c.SchedulerService.DeleteSchedule(before.ID, "session-reminder-")
-		log.Printf("Deleted all schedules for deleted session %s", before.ID)
+		log.Printf("Deleted all schedules (including reminder email) for deleted session %s", before.ID)
 	}
 }

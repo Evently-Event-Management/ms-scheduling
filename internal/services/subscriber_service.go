@@ -4,17 +4,21 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"ms-scheduling/internal/models"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
 type SubscriberService struct {
-	DB             *sql.DB
-	KeycloakClient *KeycloakClient
-	EmailService   *EmailService
+	DB                *sql.DB
+	KeycloakClient    *KeycloakClient
+	EmailService      *EmailService
+	HttpClient        *http.Client
+	EventQueryService string
 }
 
 func NewSubscriberService(db *sql.DB, keycloakClient *KeycloakClient, emailService *EmailService) *SubscriberService {
@@ -22,6 +26,7 @@ func NewSubscriberService(db *sql.DB, keycloakClient *KeycloakClient, emailServi
 		DB:             db,
 		KeycloakClient: keycloakClient,
 		EmailService:   emailService,
+		HttpClient:     &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -789,128 +794,218 @@ func (s *SubscriberService) buildEventCreationEmail(subscriber models.Subscriber
 	return subject, body.String()
 }
 
-// ProcessSessionReminder handles session reminder email notifications (1 day before session)
+// ProcessSessionReminder handles generic session reminder email notifications
+// This is the legacy method that can handle any type of reminder
 func (s *SubscriberService) ProcessSessionReminder(sessionID string) error {
-	log.Printf("Processing session reminder email for session ID: %s", sessionID)
+	log.Printf("Processing generic session reminder email for session ID: %s", sessionID)
 
-	// Get all subscribers for this session
-	sessionSubscribers, err := s.GetSessionSubscribers(sessionID)
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
 	if err != nil {
-		return fmt.Errorf("error getting session subscribers: %w", err)
+		return err
 	}
-
-	// Get session details (we need event ID to also get event subscribers)
-	eventID, err := s.getEventIDFromSession(sessionID)
-	if err != nil {
-		log.Printf("Warning: Could not get event ID for session %s: %v", sessionID, err)
-		// Continue with just session subscribers
-	}
-
-	var eventSubscribers []models.Subscriber
-	if eventID != "" {
-		eventSubscribers, err = s.GetEventSubscribers(eventID)
-		if err != nil {
-			log.Printf("Warning: Could not get event subscribers for event %s: %v", eventID, err)
-		}
-	}
-
-	// Combine and deduplicate subscribers
-	allSubscribers := s.combineAndDeduplicateSubscribers(sessionSubscribers, eventSubscribers)
 
 	if len(allSubscribers) == 0 {
 		log.Printf("No subscribers found for session %s reminder", sessionID)
 		return nil
 	}
 
-	log.Printf("Found %d unique subscribers for session %s reminder", len(allSubscribers), sessionID)
-
-	// Get session details for email content
-	sessionDetails, err := s.getSessionDetails(sessionID)
-	if err != nil {
-		return fmt.Errorf("error getting session details: %w", err)
-	}
-
 	// Send reminder emails
 	return s.SendSessionReminderEmails(allSubscribers, sessionDetails)
 }
 
-// getEventIDFromSession retrieves the event ID associated with a session
-func (s *SubscriberService) getEventIDFromSession(sessionID string) (string, error) {
-	// This would typically query your database to get the event_id from the session
-	// For now, I'll provide a placeholder implementation
-	// You'll need to adjust this based on your actual database schema
+// ProcessSessionStartReminder handles session start reminder email notifications (1 day before session)
+func (s *SubscriberService) ProcessSessionStartReminder(sessionID string) error {
+	log.Printf("Processing session START reminder email for session ID: %s (1 day before)", sessionID)
 
-	query := `
-		SELECT event_id FROM event_sessions 
-		WHERE id = $1
-	`
-
-	var eventID string
-	err := s.DB.QueryRow(query, sessionID).Scan(&eventID)
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("session not found")
+		return err
+	}
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s start reminder", sessionID)
+		return nil
+	}
+
+	// Send session start reminder emails with specific template
+	return s.SendSessionStartReminderEmails(allSubscribers, sessionDetails)
+}
+
+// ProcessSessionSaleReminder handles session on-sale reminder email notifications (30 min before sales start)
+func (s *SubscriberService) ProcessSessionSaleReminder(sessionID string) error {
+	log.Printf("Processing session ON-SALE reminder email for session ID: %s", sessionID)
+
+	// Get subscribers and session details
+	allSubscribers, sessionDetails, err := s.getSubscribersAndSessionDetails(sessionID)
+	if err != nil {
+		return err
+	}
+
+	if len(allSubscribers) == 0 {
+		log.Printf("No subscribers found for session %s sales reminder", sessionID)
+		return nil
+	}
+
+	// Send sales start reminder emails with specific template
+	return s.SendSessionSalesReminderEmails(allSubscribers, sessionDetails)
+}
+
+// Helper function to avoid code duplication in the reminder processors
+func (s *SubscriberService) getSubscribersAndSessionDetails(sessionID string) ([]models.Subscriber, *SessionReminderInfo, error) {
+	// Get all subscribers for this session
+	sessionSubscribers, err := s.GetSessionSubscribers(sessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting session subscribers: %w", err)
+	}
+
+	// Fetch session details first - this will contain the event ID
+	sessionDetails, err := s.getSessionDetails(sessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting session details: %w", err)
+	}
+
+	// Now that we have the eventID from session details, get event subscribers
+	var eventSubscribers []models.Subscriber
+	if sessionDetails.EventID != "" {
+		eventSubscribers, err = s.GetEventSubscribers(sessionDetails.EventID)
+		if err != nil {
+			log.Printf("Warning: Could not get event subscribers for event %s: %v", sessionDetails.EventID, err)
+			// Continue with just session subscribers
 		}
+	}
+
+	// Combine and deduplicate subscribers
+	allSubscribers := s.combineAndDeduplicateSubscribers(sessionSubscribers, eventSubscribers)
+
+	return allSubscribers, sessionDetails, nil
+}
+
+// getEventIDFromSession retrieves the event ID associated with a session using the Event Query API
+func (s *SubscriberService) getEventIDFromSession(sessionID string) (string, error) {
+	if s.EventQueryService == "" {
+		return "", fmt.Errorf("event query service URL not configured")
+	}
+
+	// Use the extended session info API to get session details including the event ID
+	sessionInfo, err := s.getSessionDetailsFromAPI(sessionID)
+	if err != nil {
 		return "", err
 	}
 
-	return eventID, nil
+	return sessionInfo.EventID, nil
 }
 
-// getSessionDetails retrieves session information for reminder emails
+// getSessionDetailsFromAPI fetches session details from the Event Query API
+func (s *SubscriberService) getSessionDetailsFromAPI(sessionID string) (*models.SessionExtendedInfo, error) {
+	if s.EventQueryService == "" {
+		return nil, fmt.Errorf("event query service URL not configured")
+	}
+
+	if s.HttpClient == nil {
+		s.HttpClient = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	// Create the API URL for fetching extended session info
+	apiURL := fmt.Sprintf("%s/v1/events/sessions/%s/extended-info", s.EventQueryService, sessionID)
+	log.Printf("Fetching session details from: %s", apiURL)
+
+	// Make the API request
+	resp, err := s.HttpClient.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch session info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned non-OK status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse the response
+	var sessionInfo models.SessionExtendedInfo
+	if err := json.NewDecoder(resp.Body).Decode(&sessionInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode session info: %w", err)
+	}
+
+	return &sessionInfo, nil
+}
+
+// getEventDetailsFromAPI fetches event details from the Event Query API
+func (s *SubscriberService) getEventDetailsFromAPI(eventID string) (*models.EventBasicInfo, error) {
+	if s.EventQueryService == "" {
+		return nil, fmt.Errorf("event query service URL not configured")
+	}
+
+	if s.HttpClient == nil {
+		s.HttpClient = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	// Create the API URL for fetching basic event info
+	apiURL := fmt.Sprintf("%s/v1/events/%s/basic-info", s.EventQueryService, eventID)
+	log.Printf("Fetching event details from: %s", apiURL)
+
+	// Make the API request
+	resp, err := s.HttpClient.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch event info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned non-OK status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse the response
+	var eventInfo models.EventBasicInfo
+	if err := json.NewDecoder(resp.Body).Decode(&eventInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode event info: %w", err)
+	}
+
+	return &eventInfo, nil
+}
+
+// getSessionDetails retrieves session information for reminder emails using the API
 func (s *SubscriberService) getSessionDetails(sessionID string) (*SessionReminderInfo, error) {
-	query := `
-		SELECT 
-			es.id,
-			es.event_id,
-			es.start_time,
-			es.end_time,
-			es.status,
-			es.venue_details,
-			es.session_type,
-			es.sales_start_time
-		FROM event_sessions es
-		WHERE es.id = $1
-	`
-
-	var session SessionReminderInfo
-	var venueDetailsJSON sql.NullString
-	var salesStartTime sql.NullInt64
-
-	err := s.DB.QueryRow(query, sessionID).Scan(
-		&session.SessionID,
-		&session.EventID,
-		&session.StartTime,
-		&session.EndTime,
-		&session.Status,
-		&venueDetailsJSON,
-		&session.SessionType,
-		&salesStartTime,
-	)
-
+	// Get session details from the API
+	sessionData, err := s.getSessionDetailsFromAPI(sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse venue details JSON if present
-	if venueDetailsJSON.Valid {
-		session.VenueDetails = venueDetailsJSON.String
+	// Convert API model to our internal model
+	session := &SessionReminderInfo{
+		SessionID:      sessionData.SessionID,
+		EventID:        sessionData.EventID,
+		EventTitle:     sessionData.EventTitle,
+		StartTime:      sessionData.StartTime.UnixMicro(),
+		EndTime:        sessionData.EndTime.UnixMicro(),
+		Status:         sessionData.Status,
+		SessionType:    sessionData.SessionType,
+		SalesStartTime: sessionData.SalesStartTime.UnixMicro(),
 	}
 
-	if salesStartTime.Valid {
-		session.SalesStartTime = salesStartTime.Int64
+	// Handle venue details
+	venueDetails, err := json.Marshal(sessionData.VenueDetails)
+	if err == nil {
+		session.VenueDetails = string(venueDetails)
 	}
 
-	// Try to get event title as well
-	if session.EventID != "" {
-		eventQuery := `SELECT title FROM events WHERE id = $1`
-		err := s.DB.QueryRow(eventQuery, session.EventID).Scan(&session.EventTitle)
-		if err != nil {
+	// If the event title is not included in the session details, try to fetch it separately
+	if session.EventTitle == "" && session.EventID != "" {
+		eventData, err := s.getEventDetailsFromAPI(session.EventID)
+		if err == nil {
+			session.EventTitle = eventData.Title
+		} else {
 			log.Printf("Could not get event title for event %s: %v", session.EventID, err)
 		}
 	}
 
-	return &session, nil
+	return session, nil
 }
 
 // combineAndDeduplicateSubscribers merges two subscriber lists and removes duplicates
@@ -936,9 +1031,9 @@ func (s *SubscriberService) combineAndDeduplicateSubscribers(sessionSubs, eventS
 	return result
 }
 
-// SendSessionReminderEmails sends reminder emails to all subscribers
+// SendSessionReminderEmails sends generic reminder emails to all subscribers
 func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
-	log.Printf("Sending session reminder emails to %d subscribers", len(subscribers))
+	log.Printf("Sending generic session reminder emails to %d subscribers", len(subscribers))
 
 	for _, subscriber := range subscribers {
 		subject, body := s.buildSessionReminderEmail(subscriber, sessionInfo)
@@ -951,6 +1046,46 @@ func (s *SubscriberService) SendSessionReminderEmails(subscribers []models.Subsc
 		}
 
 		log.Printf("Session reminder email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// SendSessionStartReminderEmails sends session start reminder emails (1 day before)
+func (s *SubscriberService) SendSessionStartReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
+	log.Printf("Sending session START reminder emails to %d subscribers (1 day before)", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionStartReminderEmail(subscriber, sessionInfo)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending session start reminder email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Session start reminder email sent successfully to: %s", subscriber.SubscriberMail)
+	}
+
+	return nil
+}
+
+// SendSessionSalesReminderEmails sends sales start reminder emails (30 min before)
+func (s *SubscriberService) SendSessionSalesReminderEmails(subscribers []models.Subscriber, sessionInfo *SessionReminderInfo) error {
+	log.Printf("Sending session SALES reminder emails to %d subscribers", len(subscribers))
+
+	for _, subscriber := range subscribers {
+		subject, body := s.buildSessionSalesReminderEmail(subscriber, sessionInfo)
+
+		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		if err != nil {
+			log.Printf("Error sending sales start reminder email to %s: %v", subscriber.SubscriberMail, err)
+			// Continue with other subscribers even if one fails
+			continue
+		}
+
+		log.Printf("Sales start reminder email sent successfully to: %s", subscriber.SubscriberMail)
 	}
 
 	return nil

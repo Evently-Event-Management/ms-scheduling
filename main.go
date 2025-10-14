@@ -102,6 +102,8 @@ func main() {
 
 	// Initialize subscriber service
 	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService)
+	// Set the event query service URL
+	subscriberService.EventQueryService = cfg.EventQueryServiceURL
 
 	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
 	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
@@ -215,7 +217,7 @@ func setupHTTPServer(cfg appconfig.Config, subscriberService *services.Subscribe
 	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET")
 
 	// Healthcheck endpoint (no authentication required)
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/api/scheduler/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}).Methods("GET")
