@@ -15,7 +15,7 @@ import (
 	"github.com/gorilla/mux"
 
 	auth "ms-scheduling/internal/auth"
-	appconfig "ms-scheduling/internal/config"
+	"ms-scheduling/internal/config"
 	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/handlers"
 	"ms-scheduling/internal/kafka"
@@ -33,7 +33,7 @@ func main() {
 	testUserID := flag.String("test-user", "", "Test getting email for a specific user ID")
 	flag.Parse()
 
-	cfg := appconfig.Load()
+	cfg := config.Load()
 	log.Printf("Loaded config: %+v", cfg)
 
 	// Create clients once, outside the loop
@@ -105,19 +105,54 @@ func main() {
 	// Set the event query service URL
 	subscriberService.EventQueryService = cfg.EventQueryServiceURL
 
-	// Start Kafka consumer in a separate goroutine if Kafka URL is configured
-	if cfg.KafkaURL != "" && cfg.EventSessionsKafkaTopic != "" {
-		log.Printf("Starting Kafka consumer for topic %s at %s", cfg.EventSessionsKafkaTopic, cfg.KafkaURL)
-		kafkaConsumer := kafka.NewConsumer(cfg, cfg.KafkaURL, cfg.EventSessionsKafkaTopic, schedulerService, subscriberService)
+	// Start Kafka consumers in separate goroutines if Kafka URL is configured
+	if cfg.KafkaURL != "" {
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			kafkaConsumer.ConsumeDebeziumEvents()
-		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Start event sessions consumer if topic is configured
+		if cfg.EventSessionsKafkaTopic != "" {
+			log.Printf("Starting event sessions consumer for topic %s at %s", cfg.EventSessionsKafkaTopic, cfg.KafkaURL)
+			sessionConsumer := kafka.NewSessionConsumer(cfg, schedulerService, subscriberService)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := sessionConsumer.StartConsuming(ctx); err != nil {
+					log.Printf("Error in session consumer: %v", err)
+				}
+			}()
+		}
+
+		// Start orders consumer if topic is configured
+		if cfg.OrdersKafkaTopic != "" {
+			log.Printf("Starting orders consumer for topic %s at %s", cfg.OrdersKafkaTopic, cfg.KafkaURL)
+			orderConsumer := kafka.NewOrderConsumer(cfg, subscriberService)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := orderConsumer.StartConsuming(ctx); err != nil {
+					log.Printf("Error in order consumer: %v", err)
+				}
+			}()
+		}
+
+		// Start events consumer if topic is configured
+		if cfg.EventsKafkaTopic != "" {
+			log.Printf("Starting events consumer for topic %s at %s", cfg.EventsKafkaTopic, cfg.KafkaURL)
+			eventConsumer := kafka.NewEventConsumer(cfg, subscriberService)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := eventConsumer.StartConsuming(ctx); err != nil {
+					log.Printf("Error in event consumer: %v", err)
+				}
+			}()
+		}
+
 		// We don't wait for wg.Wait() so the SQS processing can continue
 	} else {
-		log.Println("Kafka URL or topic not configured, skipping Kafka consumer setup")
+		log.Println("Kafka URL not configured, skipping Kafka consumers setup")
 	}
 
 	// Start trending job processor in a separate goroutine if trending queue URL is configured
@@ -179,7 +214,7 @@ func main() {
 }
 
 // setupHTTPServer configures and starts the HTTP server
-func setupHTTPServer(cfg appconfig.Config, subscriberService *services.SubscriberService) {
+func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberService) {
 	router := mux.NewRouter()
 
 	// Create subscription handlers
@@ -235,7 +270,7 @@ func setupHTTPServer(cfg appconfig.Config, subscriberService *services.Subscribe
 }
 
 // testGetUserEmail tests the GetUserEmailByID function with the provided user ID
-func testGetUserEmail(cfg appconfig.Config, httpClient *http.Client, userID string) {
+func testGetUserEmail(cfg config.Config, httpClient *http.Client, userID string) {
 	log.Printf("Testing GetUserEmailByID with user ID: %s", userID)
 
 	email, err := auth.GetUserEmailByID(cfg, httpClient, userID)

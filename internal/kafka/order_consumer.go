@@ -1,0 +1,73 @@
+package kafka
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+
+	"ms-scheduling/internal/config"
+	"ms-scheduling/internal/models"
+	"ms-scheduling/internal/services"
+)
+
+// OrderConsumer handles order-related Kafka events
+type OrderConsumer struct {
+	BaseConsumer
+	SubscriberService *services.SubscriberService
+}
+
+// NewOrderConsumer creates a new consumer for order events
+func NewOrderConsumer(cfg config.Config, subscriberService *services.SubscriberService) *OrderConsumer {
+	baseConsumer := NewBaseConsumer(cfg, cfg.KafkaURL, cfg.OrdersKafkaTopic)
+
+	return &OrderConsumer{
+		BaseConsumer:      *baseConsumer,
+		SubscriberService: subscriberService,
+	}
+}
+
+// StartConsuming starts consuming order events
+func (c *OrderConsumer) StartConsuming(ctx context.Context) error {
+	log.Printf("Starting order consumer for topic %s", c.Reader.Config().Topic)
+
+	c.ConsumeMessages(ctx, c.processOrderCreated)
+
+	return nil
+}
+
+// processOrderCreated handles ticketly.order.created events
+func (c *OrderConsumer) processOrderCreated(value []byte) error {
+	var order services.OrderCreatedEvent
+	if err := json.Unmarshal(value, &order); err != nil {
+		log.Printf("Error unmarshalling order.created event: %v", err)
+		return err
+	}
+	log.Printf("Processing order.created for OrderID=%s UserID=%s", order.OrderID, order.UserID)
+
+	// Get or create subscriber
+	subscriber, err := c.SubscriberService.GetOrCreateSubscriber(order.UserID)
+	if err != nil {
+		log.Printf("Error getting/creating subscriber for user %s: %v", order.UserID, err)
+		return err
+	}
+
+	// Add subscription to the event and session
+	if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID); err != nil {
+		log.Printf("Error adding event subscription: %v", err)
+	}
+
+	if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID); err != nil {
+		log.Printf("Error adding session subscription: %v", err)
+	}
+
+	// Send order confirmation email
+	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
+		log.Printf("Error sending order confirmation email: %v", err)
+		return err
+	}
+
+	log.Printf("Successfully processed order %s for user %s (email: %s)",
+		order.OrderID, order.UserID, subscriber.SubscriberMail)
+
+	return nil
+}

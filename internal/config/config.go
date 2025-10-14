@@ -8,6 +8,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config holds the application configuration
 type Config struct {
 	AWSRegion                    string
 	AWSEndpoint                  string
@@ -21,6 +22,8 @@ type Config struct {
 	ClientSecret                 string
 	KafkaURL                     string
 	EventSessionsKafkaTopic      string
+	OrdersKafkaTopic             string
+	EventsKafkaTopic             string
 	SQSSessionSchedulingQueueURL string
 	SQSSessionSchedulingQueueARN string
 	SQSSessionRemindersQueueURL  string
@@ -84,7 +87,6 @@ func Load() Config {
 		ClientID:                     getEnv("KEYCLOAK_CLIENT_ID", "scheduler-service-client"),
 		ClientSecret:                 getEnv("SCHEDULER_CLIENT_SECRET", ""),
 		KafkaURL:                     getEnv("KAFKA_URL", "localhost:9092"),
-		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		SQSSessionSchedulingQueueURL: getEnv("AWS_SQS_SESSION_SCHEDULING_URL", ""),
 		SQSSessionSchedulingQueueARN: getEnv("AWS_SQS_SESSION_SCHEDULING_ARN", ""),
 		SQSSessionRemindersQueueURL:  getEnv("AWS_SQS_SESSION_REMINDERS_URL", ""),
@@ -93,6 +95,9 @@ func Load() Config {
 		SQSTrendingQueueARN:          getEnv("AWS_SQS_TRENDING_JOB_ARN", ""),
 		SchedulerRoleARN:             getEnv("AWS_SCHEDULER_ROLE_ARN", ""),
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
+		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
+		OrdersKafkaTopic:             getEnv("ORDERS_KAFKA_TOPIC", "ticketly.order.created"),
+		EventsKafkaTopic:             getEnv("EVENTS_KAFKA_TOPIC", "dbz.ticketly.public.events"),
 
 		// Database configuration
 		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost port=5432 user=postgres password= dbname=ticketly sslmode=disable"),

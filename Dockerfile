@@ -35,7 +35,9 @@ ENV AWS_REGION="ap-south-1" \
     KEYCLOAK_REALM="event-ticketing" \
     KEYCLOAK_CLIENT_ID="scheduler-service-client" \
     KAFKA_URL="" \
-    KAFKA_TOPIC=""
+    EVENT_SESSIONS_KAFKA_TOPIC="" \
+    ORDERS_KAFKA_TOPIC="" \
+    EVENTS_KAFKA_TOPIC=""
 
 # Copy the built binary from the builder stage
 COPY --from=builder /scheduler-service .
