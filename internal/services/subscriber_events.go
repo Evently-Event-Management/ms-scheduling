@@ -240,10 +240,6 @@ func (s *SubscriberService) GetOrganizationSubscribers(organizationID string) ([
 func (s *SubscriberService) ProcessEventCreation(eventUpdate *models.DebeziumEventEvent) error {
 	log.Printf("Processing event creation notification: %s", eventUpdate.Payload.Operation)
 
-	if eventUpdate.Payload.Operation != "c" {
-		return nil
-	}
-
 	if eventUpdate.Payload.After == nil {
 		return fmt.Errorf("no after data available for event creation")
 	}
