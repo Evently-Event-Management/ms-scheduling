@@ -60,6 +60,12 @@ func (c *OrderConsumer) processOrderCreated(value []byte) error {
 		log.Printf("Error adding session subscription: %v", err)
 	}
 
+	if order.OrganizationID != "" {
+		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryOrganization, order.OrganizationID); err != nil {
+			log.Printf("Error adding organization subscription: %v", err)
+		}
+	}
+
 	// Send order confirmation email
 	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
 		log.Printf("Error sending order confirmation email: %v", err)

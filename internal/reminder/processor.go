@@ -3,7 +3,9 @@ package reminder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"ms-scheduling/internal/config"
 	"ms-scheduling/internal/models"
@@ -24,6 +26,8 @@ type Processor struct {
 	queueURL          string
 	subscriberService *services.SubscriberService
 }
+
+var errResourceNotFound = errors.New("resource not found")
 
 // NewProcessor creates a new reminder processor
 func NewProcessor(sqsClient *sqs.Client, httpClient *http.Client, cfg config.Config, subscriberService *services.SubscriberService) *Processor {
@@ -127,15 +131,186 @@ func (p *Processor) processReminderMessage(msg *models.SQSReminderMessageBody) e
 	// Handle based solely on ReminderType
 	switch msg.ReminderType {
 	case "SESSION_START":
-		// Session start reminder (1 day before)
-		return p.subscriberService.ProcessSessionStartReminder(msg.SessionID)
+		return p.handleReminder(msg.SessionID, func(subscribers []models.Subscriber, info *services.SessionReminderInfo) error {
+			return p.subscriberService.SendSessionStartReminderEmails(subscribers, info)
+		})
 
 	case "SALE_START":
-		// Session on sale reminder (30 mins before sales start)
-		return p.subscriberService.ProcessSessionSaleReminder(msg.SessionID)
+		return p.handleReminder(msg.SessionID, func(subscribers []models.Subscriber, info *services.SessionReminderInfo) error {
+			return p.subscriberService.SendSessionSalesReminderEmails(subscribers, info)
+		})
 	default:
 		// For unknown reminder types, log and delete from queue (return nil)
 		log.Printf("Unknown reminder type: %s, skipping. Full message: %+v", msg.ReminderType, msg)
 		return nil
 	}
+}
+
+func (p *Processor) handleReminder(sessionID string, send func([]models.Subscriber, *services.SessionReminderInfo) error) error {
+	subscribers, sessionInfo, err := p.prepareSessionReminderData(sessionID)
+	if err != nil {
+		if errors.Is(err, errResourceNotFound) {
+			log.Printf("Session %s not found. Consuming reminder message without sending emails.", sessionID)
+			return nil
+		}
+		return err
+	}
+
+	if len(subscribers) == 0 {
+		log.Printf("No subscribers found for session %s reminder", sessionID)
+		return nil
+	}
+
+	if err := send(subscribers, sessionInfo); err != nil {
+		return fmt.Errorf("failed to send reminder emails for session %s: %w", sessionID, err)
+	}
+
+	return nil
+}
+
+func (p *Processor) prepareSessionReminderData(sessionID string) ([]models.Subscriber, *services.SessionReminderInfo, error) {
+	sessionDetails, err := p.fetchSessionExtendedInfo(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sessionInfo := &services.SessionReminderInfo{
+		SessionID:      sessionDetails.SessionID,
+		EventID:        sessionDetails.EventID,
+		EventTitle:     sessionDetails.EventTitle,
+		StartTime:      sessionDetails.StartTime.UnixMicro(),
+		EndTime:        sessionDetails.EndTime.UnixMicro(),
+		Status:         sessionDetails.Status,
+		VenueDetails:   "",
+		SessionType:    sessionDetails.SessionType,
+		SalesStartTime: sessionDetails.SalesStartTime.UnixMicro(),
+	}
+
+	if venueBytes, err := json.Marshal(sessionDetails.VenueDetails); err == nil {
+		sessionInfo.VenueDetails = string(venueBytes)
+	} else {
+		log.Printf("Warning: Failed to marshal venue details for session %s: %v", sessionID, err)
+	}
+
+	sessionSubscribers, err := p.subscriberService.GetSessionSubscribers(sessionID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error getting session subscribers: %w", err)
+	}
+
+	var eventSubscribers []models.Subscriber
+	if sessionInfo.EventID != "" {
+		eventSubscribers, err = p.subscriberService.GetEventSubscribers(sessionInfo.EventID)
+		if err != nil {
+			log.Printf("Warning: Could not get event subscribers for event %s: %v", sessionInfo.EventID, err)
+		}
+	}
+
+	if sessionInfo.EventTitle == "" && sessionInfo.EventID != "" {
+		eventDetails, err := p.fetchEventBasicInfo(sessionInfo.EventID)
+		switch {
+		case err == nil:
+			sessionInfo.EventTitle = eventDetails.Title
+		case errors.Is(err, errResourceNotFound):
+			log.Printf("Event %s not found while preparing reminder for session %s", sessionInfo.EventID, sessionID)
+		case err != nil:
+			log.Printf("Warning: Could not fetch event title for event %s: %v", sessionInfo.EventID, err)
+		}
+	}
+
+	allSubscribers := combineAndDeduplicateSubscribers(sessionSubscribers, eventSubscribers)
+
+	return allSubscribers, sessionInfo, nil
+}
+
+func (p *Processor) fetchSessionExtendedInfo(sessionID string) (*models.SessionExtendedInfo, error) {
+	if p.cfg.EventQueryServiceURL == "" {
+		return nil, fmt.Errorf("event query service URL not configured")
+	}
+
+	apiURL := fmt.Sprintf("%s/v1/events/sessions/%s/extended-info", p.cfg.EventQueryServiceURL, sessionID)
+	log.Printf("Fetching session details from: %s", apiURL)
+
+	resp, err := p.httpClient.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch session info: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("Error closing session info response body: %v", cerr)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errResourceNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("session info API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var sessionInfo models.SessionExtendedInfo
+	if err := json.NewDecoder(resp.Body).Decode(&sessionInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode session info: %w", err)
+	}
+
+	return &sessionInfo, nil
+}
+
+func (p *Processor) fetchEventBasicInfo(eventID string) (*models.EventBasicInfo, error) {
+	if p.cfg.EventQueryServiceURL == "" {
+		return nil, fmt.Errorf("event query service URL not configured")
+	}
+
+	apiURL := fmt.Sprintf("%s/v1/events/%s/basic-info", p.cfg.EventQueryServiceURL, eventID)
+	log.Printf("Fetching event details from: %s", apiURL)
+
+	resp, err := p.httpClient.Get(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch event info: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("Error closing event info response body: %v", cerr)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errResourceNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("event info API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var eventInfo models.EventBasicInfo
+	if err := json.NewDecoder(resp.Body).Decode(&eventInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode event info: %w", err)
+	}
+
+	return &eventInfo, nil
+}
+
+func combineAndDeduplicateSubscribers(sessionSubs, eventSubs []models.Subscriber) []models.Subscriber {
+	if len(sessionSubs) == 0 && len(eventSubs) == 0 {
+		return nil
+	}
+
+	subscriberMap := make(map[int]models.Subscriber, len(sessionSubs)+len(eventSubs))
+
+	for _, sub := range sessionSubs {
+		subscriberMap[sub.SubscriberID] = sub
+	}
+
+	for _, sub := range eventSubs {
+		subscriberMap[sub.SubscriberID] = sub
+	}
+
+	result := make([]models.Subscriber, 0, len(subscriberMap))
+	for _, sub := range subscriberMap {
+		result = append(result, sub)
+	}
+
+	return result
 }
