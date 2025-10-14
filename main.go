@@ -122,9 +122,10 @@ func main() {
 			}()
 		}
 
-		// Start orders consumer if topic is configured
-		if cfg.OrdersKafkaTopic != "" {
-			log.Printf("Starting orders consumer for topic %s at %s", cfg.OrdersKafkaTopic, cfg.KafkaURL)
+		// Start orders consumer if any order topic is configured
+		if cfg.OrdersKafkaTopic != "" || cfg.OrdersUpdatedKafkaTopic != "" || cfg.OrdersCancelledKafkaTopic != "" {
+			log.Printf("Starting orders consumer for topics (created: %s, updated: %s, cancelled: %s) at %s",
+				cfg.OrdersKafkaTopic, cfg.OrdersUpdatedKafkaTopic, cfg.OrdersCancelledKafkaTopic, cfg.KafkaURL)
 			orderConsumer := kafka.NewOrderConsumer(cfg, subscriberService)
 			wg.Add(1)
 			go func() {
