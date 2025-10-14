@@ -9,54 +9,9 @@ import (
 	"time"
 )
 
-// buildSessionStartReminderEmail creates the email content for session start reminders (1 day before)
-func (s *SubscriberService) buildSessionStartReminderEmail(subscriber models.Subscriber, sessionInfo *SessionReminderInfo) (string, string) {
-	// Convert timestamps to readable format
-	startTime := models.MicroTimestampToTime(sessionInfo.StartTime)
-	endTime := models.MicroTimestampToTime(sessionInfo.EndTime)
-
-	// Get subscriber name if possible
-	subscriberName := s.getSubscriberName(subscriber)
-
-	var eventTitle string
-	if sessionInfo.EventTitle != "" {
-		eventTitle = sessionInfo.EventTitle
-	} else {
-		eventTitle = "Your Event"
-	}
-
-	subject := fmt.Sprintf("🔔 Reminder: %s is tomorrow!", eventTitle)
-
-	// Calculate session duration
-	durationStr := s.formatDuration(startTime, endTime)
-
-	// Format date and time more user-friendly
-	dateStr := startTime.Format("Monday, January 2, 2006")
-	startTimeStr := startTime.Format("3:04 PM")
-	endTimeStr := endTime.Format("3:04 PM")
-
-	// Generate calendar links
-	calendarMsg := s.generateCalendarLinks(sessionInfo, eventTitle, startTime, endTime)
-
-	// Build HTML email body
-	var body strings.Builder
-	body.WriteString(fmt.Sprintf("<h2>Hello %s!</h2>", subscriberName))
-	body.WriteString(fmt.Sprintf("<p>This is a reminder that <strong>%s</strong> is happening tomorrow!</p>", eventTitle))
-	body.WriteString("<p><strong>📅 Event Details:</strong></p>")
-	body.WriteString("<ul>")
-	body.WriteString(fmt.Sprintf("<li><strong>Date:</strong> %s</li>", dateStr))
-	body.WriteString(fmt.Sprintf("<li><strong>Time:</strong> %s to %s</li>", startTimeStr, endTimeStr))
-	body.WriteString(fmt.Sprintf("<li><strong>Duration:</strong> %s</li>", durationStr))
-	if sessionInfo.VenueDetails != "" {
-		body.WriteString(fmt.Sprintf("<li><strong>Venue:</strong> %s</li>", sessionInfo.VenueDetails))
-	}
-	body.WriteString("</ul>")
-	body.WriteString("<p>We look forward to seeing you there!</p>")
-	body.WriteString(calendarMsg)
-	body.WriteString("<p><em>This is an automated reminder message. Please do not reply to this email.</em></p>")
-
-	return subject, body.String()
-}
+// Helper methods for subscriber-related services
+// Note: The template generation functions have been moved to email_common_templates.go
+// Only utility helper methods remain in this file
 
 // buildSessionSalesReminderEmail creates the email content for session sales start reminders
 func (s *SubscriberService) buildSessionSalesReminderEmail(subscriber models.Subscriber, sessionInfo *SessionReminderInfo) (string, string) {

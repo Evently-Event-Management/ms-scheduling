@@ -38,6 +38,17 @@ func (e *EmailService) SendEmail(to, subject, body string) error {
 	// Email headers
 	from := fmt.Sprintf("%s <%s>", e.FromName, e.FromEmail)
 
+	// Determine if the body is already HTML
+	isHTML := strings.Contains(body, "<!DOCTYPE html") || strings.Contains(body, "<html")
+
+	// Format body appropriately
+	var formattedBody string
+	if isHTML {
+		formattedBody = body // Already HTML formatted
+	} else {
+		formattedBody = e.formatEmailBody(body) // Convert plain text to HTML
+	}
+
 	// Compose message
 	msg := []byte(fmt.Sprintf(
 		"From: %s\r\n"+
@@ -47,7 +58,7 @@ func (e *EmailService) SendEmail(to, subject, body string) error {
 			"Content-Type: text/html; charset=UTF-8\r\n"+
 			"\r\n"+
 			"%s\r\n",
-		from, to, subject, e.formatEmailBody(body)))
+		from, to, subject, formattedBody))
 
 	// Verbose logging for debugging
 	log.Printf("[EmailService] Attempting to send email...")
