@@ -79,19 +79,41 @@ func (c *EventConsumer) processEventEvent(value []byte) error {
 
 	// Handle different operations
 	switch rawEvent.Payload.Op {
-	case "c": // Event creation - notify organization subscribers
-		if err := c.SubscriberService.ProcessEventCreation(&eventEvent); err != nil {
-			log.Printf("Error processing event creation notification from Debezium: %v", err)
-			return err
-		}
-		log.Printf("Successfully processed event creation notification for event %s", eventID)
+	case "c": // Skip event creation notification
+		log.Printf("Skipping notification for event creation: %s", eventID)
 
-	case "u", "d": // Event update/delete - notify event subscribers
+	case "u": // Event update - notify only if before=PENDING and after=APPROVED
+		// Check status transition for updates
+		if rawEvent.Payload.Before != nil && rawEvent.Payload.After != nil {
+			beforeStatus := rawEvent.Payload.Before.Status
+			afterStatus := rawEvent.Payload.After.Status
+
+			if beforeStatus == "PENDING" && afterStatus == "APPROVED" {
+				// This is a status change from PENDING to APPROVED - treat as creation
+				if err := c.SubscriberService.ProcessEventCreation(&eventEvent); err != nil {
+					log.Printf("Error processing event approval notification from Debezium: %v", err)
+					return err
+				}
+				log.Printf("Successfully processed event approval (PENDING->APPROVED) notification for event %s", eventID)
+			} else if afterStatus == "APPROVED" {
+				// Other changes but final status is still APPROVED - process as update
+				if err := c.SubscriberService.ProcessEventUpdate(&eventEvent); err != nil {
+					log.Printf("Error processing event update notification from Debezium: %v", err)
+					return err
+				}
+				log.Printf("Successfully processed event update notification for approved event %s", eventID)
+			} else {
+				// Status is not APPROVED - skip notification
+				log.Printf("Skipping notification for event %s - status is %s (not APPROVED)", eventID, afterStatus)
+			}
+		}
+
+	case "d": // Event deletion - process normally for subscribers
 		if err := c.SubscriberService.ProcessEventUpdate(&eventEvent); err != nil {
-			log.Printf("Error processing event update notification from Debezium: %v", err)
+			log.Printf("Error processing event deletion notification from Debezium: %v", err)
 			return err
 		}
-		log.Printf("Successfully processed event update notification for event %s", eventID)
+		log.Printf("Successfully processed event deletion notification for event %s", eventID)
 
 	default:
 		log.Printf("Unhandled operation '%s' for event %s", rawEvent.Payload.Op, eventID)

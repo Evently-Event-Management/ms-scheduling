@@ -150,22 +150,24 @@ func (c *OrderConsumer) processOrderUpdated(value []byte) error {
 	// For orders changing to 'completed' status, add subscriptions
 	if order.Status == "completed" {
 		// Add subscription to the event and session
+		log.Printf("Order %s is now completed - adding subscriptions", order.OrderID)
+
+		log.Printf("Adding event subscription for event %s", order.EventID)
 		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID); err != nil {
 			log.Printf("Error adding event subscription: %v", err)
 		}
 
+		log.Printf("Adding session subscription for session %s", order.SessionID)
 		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID); err != nil {
 			log.Printf("Error adding session subscription: %v", err)
 		}
 
-		if order.OrganizationID != "" {
-			if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryOrganization, order.OrganizationID); err != nil {
-				log.Printf("Error adding organization subscription: %v", err)
-			}
+		log.Printf("Adding organization subscription for organization %s", order.OrganizationID)
+		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryOrganization, order.OrganizationID); err != nil {
+			log.Printf("Error adding organization subscription: %v", err)
 		}
-
-		log.Printf("Added subscriptions for completed order %s", order.OrderID)
 	}
+	log.Printf("Added subscriptions for completed order %s", order.OrderID)
 
 	// Send appropriate order email based on status
 	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
