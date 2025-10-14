@@ -183,31 +183,31 @@ const commonStyles = `
 
 // Helper functions to generate URLs based on config
 func generateEventURL(cfg *config.Config, eventID string) string {
-	return fmt.Sprintf("%s/home-app/events/%s", cfg.FrontendURL, eventID)
+	return fmt.Sprintf("%s/events/%s", cfg.FrontendURL, eventID)
 }
 
 func generateSessionURL(cfg *config.Config, eventID, sessionID string) string {
-	return fmt.Sprintf("%s/home-app/events/%s/%s", cfg.FrontendURL, eventID, sessionID)
+	return fmt.Sprintf("%s/events/%s/%s", cfg.FrontendURL, eventID, sessionID)
 }
 
 func generateOrderURL(cfg *config.Config, orderID string) string {
-	return fmt.Sprintf("%s/home-app/orders/%s", cfg.FrontendURL, orderID)
+	return fmt.Sprintf("%s/orders/%s", cfg.FrontendURL, orderID)
 }
 
 func generatePaymentSuccessURL(cfg *config.Config) string {
-	return fmt.Sprintf("%s/home-app/payment-success", cfg.FrontendURL)
+	return fmt.Sprintf("%s/payment-success", cfg.FrontendURL)
 }
 
 func generateOrdersListURL(cfg *config.Config) string {
-	return fmt.Sprintf("%s/home-app/orders", cfg.FrontendURL)
+	return fmt.Sprintf("%s/orders", cfg.FrontendURL)
 }
 
 func generateEventsListURL(cfg *config.Config) string {
-	return fmt.Sprintf("%s/home-app/events", cfg.FrontendURL)
+	return fmt.Sprintf("%s/events", cfg.FrontendURL)
 }
 
 func generateUnsubscribeURL(cfg *config.Config, subscriptionID string) string {
-	return fmt.Sprintf("%s/home-app/unsubscribe/%s", cfg.FrontendURL, subscriptionID)
+	return fmt.Sprintf("%s/unsubscribe/%s", cfg.FrontendURL, subscriptionID)
 }
 
 func generateVenueHTML(venue string) string {
@@ -293,7 +293,7 @@ func generateOrderConfirmedEmail(cfg *config.Config, order *OrderCreatedEvent) E
 			<div class="ticket-item">
 				<div><span class="color-swatch" style="background-color: %s"></span> <strong>%s</strong> (%s)</div>
 				<div>Seat: %s</div>
-				<div>Price: $%.2f</div>
+				<div>Price: LKR%.2f</div>
 			</div>
 		`, ticket.Colour, ticket.TierName, ticket.TierID, ticket.SeatLabel, ticket.PriceAtPurchase)
 	}
@@ -305,9 +305,9 @@ func generateOrderConfirmedEmail(cfg *config.Config, order *OrderCreatedEvent) E
 			<div><strong>Event ID:</strong> %s</div>
 			<div><strong>Session ID:</strong> %s</div>
 			<div><strong>Status:</strong> %s</div>
-			<div><strong>Subtotal:</strong> $%.2f</div>
+			<div><strong>Subtotal:</strong> LKR%.2f</div>
 			%s
-			<div><strong>Total Price:</strong> $%.2f</div>
+			<div><strong>Total Price:</strong> LKR%.2f</div>
 			<div><strong>Created At:</strong> %s</div>
 			%s
 		</div>
@@ -369,7 +369,7 @@ func generateOrderPendingEmail(cfg *config.Config, order *OrderCreatedEvent) Ema
 			<div class="ticket-item">
 				<div><span class="color-swatch" style="background-color: %s"></span> <strong>%s</strong> (%s)</div>
 				<div>Seat: %s</div>
-				<div>Price: $%.2f</div>
+				<div>Price: LKR%.2f</div>
 			</div>
 		`, ticket.Colour, ticket.TierName, ticket.TierID, ticket.SeatLabel, ticket.PriceAtPurchase)
 	}
@@ -381,9 +381,9 @@ func generateOrderPendingEmail(cfg *config.Config, order *OrderCreatedEvent) Ema
 			<div><strong>Event ID:</strong> %s</div>
 			<div><strong>Session ID:</strong> %s</div>
 			<div><strong>Status:</strong> %s</div>
-			<div><strong>Subtotal:</strong> $%.2f</div>
+			<div><strong>Subtotal:</strong> LKR%.2f</div>
 			%s
-			<div><strong>Total Price:</strong> $%.2f</div>
+			<div><strong>Total Price:</strong> LKR%.2f</div>
 			<div><strong>Created At:</strong> %s</div>
 		</div>
 	`,
@@ -440,7 +440,7 @@ func generateOrderCancelledEmail(cfg *config.Config, order *OrderCreatedEvent) E
 			<div class="ticket-item">
 				<div><span class="color-swatch" style="background-color: %s"></span> <strong>%s</strong> (%s)</div>
 				<div>Seat: %s</div>
-				<div>Price: $%.2f</div>
+				<div>Price: LKR%.2f</div>
 			</div>
 		`, ticket.Colour, ticket.TierName, ticket.TierID, ticket.SeatLabel, ticket.PriceAtPurchase)
 	}
@@ -452,9 +452,9 @@ func generateOrderCancelledEmail(cfg *config.Config, order *OrderCreatedEvent) E
 			<div><strong>Event ID:</strong> %s</div>
 			<div><strong>Session ID:</strong> %s</div>
 			<div><strong>Status:</strong> %s</div>
-			<div><strong>Subtotal:</strong> $%.2f</div>
+			<div><strong>Subtotal:</strong> LKR%.2f</div>
 			%s
-			<div><strong>Total Price:</strong> $%.2f</div>
+			<div><strong>Total Price:</strong> LKR%.2f</div>
 			<div><strong>Created At:</strong> %s</div>
 			%s
 		</div>
@@ -514,7 +514,7 @@ func generateOrderProcessingEmail(cfg *config.Config, order *OrderCreatedEvent) 
 			<div class="ticket-item">
 				<div><span class="color-swatch" style="background-color: %s"></span> <strong>%s</strong> (%s)</div>
 				<div>Seat: %s</div>
-				<div>Price: $%.2f</div>
+				<div>Price: LKR%.2f</div>
 			</div>
 		`, ticket.Colour, ticket.TierName, ticket.TierID, ticket.SeatLabel, ticket.PriceAtPurchase)
 	}
@@ -526,9 +526,9 @@ func generateOrderProcessingEmail(cfg *config.Config, order *OrderCreatedEvent) 
 			<div><strong>Event ID:</strong> %s</div>
 			<div><strong>Session ID:</strong> %s</div>
 			<div><strong>Status:</strong> %s</div>
-			<div><strong>Subtotal:</strong> $%.2f</div>
+			<div><strong>Subtotal:</strong> LKR%.2f</div>
 			%s
-			<div><strong>Total Price:</strong> $%.2f</div>
+			<div><strong>Total Price:</strong> LKR%.2f</div>
 			<div><strong>Created At:</strong> %s</div>
 			%s
 		</div>
