@@ -38,5 +38,7 @@ ENV AWS_REGION="ap-south-1" \
 # Copy the built binary from the builder stage
 COPY --from=builder /scheduler-service /scheduler-service
 
+EXPOSE 8085
+
 # Set the command to run the application
 ENTRYPOINT ["/scheduler-service"]
