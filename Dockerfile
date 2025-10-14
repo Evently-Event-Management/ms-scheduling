@@ -40,6 +40,9 @@ ENV AWS_REGION="ap-south-1" \
 # Copy the built binary from the builder stage
 COPY --from=builder /scheduler-service .
 
+# Copy the migrations folder from the builder stage
+COPY --from=builder /app/migrations ./migrations
+
 # Switch to the non-root user
 USER appuser
 
