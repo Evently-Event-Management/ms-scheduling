@@ -23,6 +23,8 @@ type Config struct {
 	KafkaURL                     string
 	EventSessionsKafkaTopic      string
 	OrdersKafkaTopic             string
+	OrdersUpdatedKafkaTopic      string
+	OrdersCancelledKafkaTopic    string
 	EventsKafkaTopic             string
 	FrontendURL                  string
 	SQSSessionSchedulingQueueURL string
@@ -98,6 +100,8 @@ func Load() Config {
 		SchedulerGroupName:           getEnv("AWS_SCHEDULER_GROUP_NAME", "default"),
 		EventSessionsKafkaTopic:      getEnv("EVENT_SESSIONS_KAFKA_TOPIC", "dbz.ticketly.public.event_sessions"),
 		OrdersKafkaTopic:             getEnv("ORDERS_KAFKA_TOPIC", "ticketly.order.created"),
+		OrdersUpdatedKafkaTopic:      getEnv("ORDERS_UPDATED_KAFKA_TOPIC", "ticketly.order.updated"),
+		OrdersCancelledKafkaTopic:    getEnv("ORDERS_CANCELLED_KAFKA_TOPIC", "ticketly.order.cancelled"),
 		EventsKafkaTopic:             getEnv("EVENTS_KAFKA_TOPIC", "dbz.ticketly.public.events"),
 		FrontendURL:                  getEnv("FRONTEND_URL", "https://ticketly.dpiyumal.me"),
 

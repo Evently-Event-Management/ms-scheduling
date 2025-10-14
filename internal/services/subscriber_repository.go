@@ -1,6 +1,8 @@
 package services
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -26,6 +28,19 @@ func (s *SubscriberService) GetOrCreateSubscriber(userID string) (*models.Subscr
 	}
 
 	log.Printf("Created new subscriber for user %s with email %s", userID, email)
+	return subscriber, nil
+}
+
+// GetSubscriberByUserID returns a subscriber by user ID, or nil if not found
+func (s *SubscriberService) GetSubscriberByUserID(userID string) (*models.Subscriber, error) {
+	subscriber, err := s.getSubscriberByUserID(userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// No subscriber found, return nil without error
+			return nil, nil
+		}
+		return nil, fmt.Errorf("error getting subscriber by user ID: %w", err)
+	}
 	return subscriber, nil
 }
 
