@@ -51,24 +51,32 @@ func (c *OrderConsumer) processOrderCreated(value []byte) error {
 		return err
 	}
 
-	// Add subscription to the event and session
-	if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID); err != nil {
-		log.Printf("Error adding event subscription: %v", err)
-	}
-
-	if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID); err != nil {
-		log.Printf("Error adding session subscription: %v", err)
-	}
-
-	if order.OrganizationID != "" {
-		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryOrganization, order.OrganizationID); err != nil {
-			log.Printf("Error adding organization subscription: %v", err)
+	// Only add subscriptions for orders in 'completed' status
+	// For pending orders, we'll add subscriptions when they're completed
+	if order.Status == "completed" {
+		// Add subscription to the event and session
+		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryEvent, order.EventID); err != nil {
+			log.Printf("Error adding event subscription: %v", err)
 		}
+
+		if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategorySession, order.SessionID); err != nil {
+			log.Printf("Error adding session subscription: %v", err)
+		}
+
+		if order.OrganizationID != "" {
+			if err := c.SubscriberService.AddSubscription(subscriber.SubscriberID, models.SubscriptionCategoryOrganization, order.OrganizationID); err != nil {
+				log.Printf("Error adding organization subscription: %v", err)
+			}
+		}
+
+		log.Printf("Added subscriptions for completed order %s", order.OrderID)
+	} else {
+		log.Printf("Order %s has status '%s' - subscriptions will be added when completed", order.OrderID, order.Status)
 	}
 
-	// Send order confirmation email
+	// Send appropriate order email based on status
 	if err := c.SubscriberService.SendOrderConfirmationEmail(subscriber, &order); err != nil {
-		log.Printf("Error sending order confirmation email: %v", err)
+		log.Printf("Error sending order email: %v", err)
 		return err
 	}
 

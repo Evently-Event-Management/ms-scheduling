@@ -1,60 +1,38 @@
 package services
 
 import (
-	"fmt"
 	"log"
 
 	"ms-scheduling/internal/models"
 )
 
-// SendOrderConfirmationEmail sends order confirmation email
+// SendOrderConfirmationEmail sends an order email based on order status
 func (s *SubscriberService) SendOrderConfirmationEmail(subscriber *models.Subscriber, order *OrderCreatedEvent) error {
-	log.Printf("Sending order confirmation email to %s for order %s", subscriber.SubscriberMail, order.OrderID)
+	log.Printf("Sending order email to %s for order %s with status %s", subscriber.SubscriberMail, order.OrderID, order.Status)
 
-	emailContent := s.generateOrderEmailTemplate(order)
-	subject := fmt.Sprintf("Order Confirmation - %s", order.OrderID)
-
-	return s.EmailService.SendEmail(subscriber.SubscriberMail, subject, emailContent)
-}
-
-func (s *SubscriberService) generateOrderEmailTemplate(order *OrderCreatedEvent) string {
-	template := `
-Dear Customer,
-
-Your order has been confirmed!
-
-Order Details:
-- Order ID: %s
-- Event ID: %s
-- Session ID: %s
-- Status: %s
-- Total Price: $%.2f
-- Created At: %s
-
-Tickets:
-%s
-
-Thank you for your purchase!
-
-Best regards,
-Ticketly Team
-`
-
-	ticketDetails := ""
-	for _, ticket := range order.Tickets {
-		ticketDetails += fmt.Sprintf("- Seat: %s (%s) - $%.2f\n",
-			ticket.SeatLabel, ticket.TierName, ticket.PriceAtPurchase)
+	// Determine email template type based on order status
+	var templateType EmailTemplateType
+	switch order.Status {
+	case "completed":
+		templateType = OrderConfirmed
+	case "pending":
+		templateType = OrderPending
+	case "cancelled":
+		templateType = OrderCancelled
+	case "processing":
+		templateType = OrderProcessing
+	default:
+		templateType = OrderPending // Default to pending if status is unknown
 	}
 
-	return fmt.Sprintf(template,
-		order.OrderID,
-		order.EventID,
-		order.SessionID,
-		order.Status,
-		order.Price,
-		order.CreatedAt,
-		ticketDetails,
-	)
+	// Generate HTML content
+	emailContent := GenerateHTMLEmailTemplate(templateType, order)
+
+	// Get email subject
+	subject := GetEmailSubject(templateType, order.OrderID)
+
+	// Send the email
+	return s.EmailService.SendEmail(subscriber.SubscriberMail, subject, emailContent)
 }
 
 // OrderCreatedEvent represents the structure of the order.created Kafka event
