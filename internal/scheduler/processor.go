@@ -140,8 +140,6 @@ func (p *Processor) processSessionMessage(token string, msg *models.SQSMessageBo
 	case "CLOSED":
 		apiPath = fmt.Sprintf("/internal/v1/sessions/%s/closed", msg.SessionID)
 	default:
-		// Instead of returning an error for unknown actions, log it and return nil
-		// This will allow the message to be consumed gracefully
 		log.Printf("Unknown action '%s' in session scheduling message for session %s. Consuming message gracefully.",
 			msg.Action, msg.SessionID)
 		return nil
