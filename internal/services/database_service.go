@@ -42,6 +42,11 @@ func (d *DatabaseService) Close() error {
 	return d.DB.Close()
 }
 
+// CheckConnection verifies database connectivity for health checks
+func (d *DatabaseService) CheckConnection() error {
+	return d.DB.Ping()
+}
+
 // RunMigrations applies all pending database migrations
 func (d *DatabaseService) RunMigrations() error {
 	return d.migrator.RunMigrations()
@@ -52,8 +57,9 @@ func (d *DatabaseService) MigrationStatus() error {
 	return d.migrator.Status()
 }
 
-// InitializeTables is now deprecated in favor of migrations
+// InitializeTables ensures the database tables are properly set up
+// This is a compatibility method that runs migrations
 func (d *DatabaseService) InitializeTables() error {
-	// Use migrations instead
+	log.Println("Initializing database tables via migrations")
 	return d.RunMigrations()
 }

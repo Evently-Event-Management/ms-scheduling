@@ -207,11 +207,11 @@ func main() {
 	}
 
 	// Set up the HTTP server for subscription API
-	setupHTTPServer(cfg, subscriberService)
+	setupHTTPServer(cfg, subscriberService, dbService)
 }
 
 // setupHTTPServer configures and starts the HTTP server
-func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberService) {
+func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberService, dbService *services.DatabaseService) {
 	router := mux.NewRouter()
 
 	// Create subscription handlers
@@ -248,13 +248,16 @@ func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberSe
 	sessionAdminRouter.Use(auth.AdminMiddleware)
 	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET")
 
-	// Healthcheck endpoint (no authentication required)
-	router.HandleFunc("/api/scheduler/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	}).Methods("GET")
+	// Create health handler for health check endpoints
+	healthHandler := handlers.NewHealthHandler(dbService)
 
-	// Start HTTP server
+	// Healthcheck endpoints (no authentication required)
+	router.HandleFunc("/api/scheduler/health", healthHandler.HandleHealth).Methods("GET")
+
+	// K8s probe endpoints
+	router.HandleFunc("/healthz", healthHandler.HandleHealth).Methods("GET")   // General health endpoint for both liveness and readiness
+	router.HandleFunc("/readyz", healthHandler.HandleReadiness).Methods("GET") // Specific readiness probe endpoint
+	router.HandleFunc("/livez", healthHandler.HandleLiveness).Methods("GET")   // Specific liveness probe endpoint	// Start HTTP server
 	serverAddr := cfg.ServerHost + ":" + cfg.ServerPort
 	log.Printf("Starting HTTP server on %s", serverAddr)
 
