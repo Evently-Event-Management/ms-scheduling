@@ -214,6 +214,9 @@ func main() {
 func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberService, dbService *services.DatabaseService) {
 	router := mux.NewRouter()
 
+	// Apply CORS middleware to all routes
+	router.Use(auth.CORSMiddleware(cfg))
+
 	// Create subscription handlers
 	subscriptionHandler := handlers.NewSubscriptionHandler(subscriberService, cfg)
 	sessionSubscriptionHandler := handlers.NewSessionSubscriptionHandler(subscriberService, cfg)

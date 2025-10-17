@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -50,6 +51,12 @@ type Config struct {
 	// HTTP server configuration
 	ServerHost string
 	ServerPort string
+
+	// CORS configuration
+	AllowedOrigins []string
+	AllowedMethods []string
+	AllowedHeaders []string
+	MaxAge         int
 }
 
 // LoadEnv loads environment variables from .env files
@@ -78,6 +85,27 @@ func Load() Config {
 	LoadEnv()
 
 	log.Println("Loading configuration from environment variables")
+	// Default CORS settings
+	allowedOrigins := []string{
+		"http://localhost:8090",
+		"http://ticketly.test:8090",
+		"http://www.localhost:8090",
+		"https://ticketly.dpiyumal.me",
+	}
+
+	// Parse CORS_ALLOWED_ORIGINS environment variable if set
+	if corsOrigins := getEnv("CORS_ALLOWED_ORIGINS", ""); corsOrigins != "" {
+		allowedOrigins = strings.Split(corsOrigins, ",")
+	}
+
+	allowedMethods := []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	if corsMethods := getEnv("CORS_ALLOWED_METHODS", ""); corsMethods != "" {
+		allowedMethods = strings.Split(corsMethods, ",")
+	}
+
+	// Set default max age to 3600 seconds
+	maxAge := 3600
+
 	return Config{
 		AWSRegion:                    getEnv("AWS_REGION", "ap-south-1"),
 		AWSEndpoint:                  getEnv("AWS_LOCAL_ENDPOINT_URL", ""),
@@ -119,6 +147,12 @@ func Load() Config {
 		// HTTP server configuration
 		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),
 		ServerPort: getEnv("SERVER_PORT", "8085"),
+
+		// CORS configuration
+		AllowedOrigins: allowedOrigins,
+		AllowedMethods: allowedMethods,
+		AllowedHeaders: []string{"*"},
+		MaxAge:         maxAge,
 	}
 }
 
