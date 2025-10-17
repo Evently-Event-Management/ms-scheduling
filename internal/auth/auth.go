@@ -37,6 +37,12 @@ func HasAdminRole(token string) (bool, error) {
 // AuthMiddleware extracts user ID from the auth token and puts it in the request context
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip authentication for OPTIONS requests (for CORS preflight)
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Extract token from request
 		token, err := ExtractTokenFromRequest(r)
 		if err != nil {
@@ -66,6 +72,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 // AdminMiddleware checks if the user has admin role
 func AdminMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip authentication for OPTIONS requests (for CORS preflight)
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Extract token from request
 		token, err := ExtractTokenFromRequest(r)
 		if err != nil {

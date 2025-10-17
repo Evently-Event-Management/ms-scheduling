@@ -214,6 +214,11 @@ func main() {
 func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberService, dbService *services.DatabaseService) {
 	router := mux.NewRouter()
 
+	// Add global OPTIONS handler for CORS preflight requests
+	router.Methods("OPTIONS").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Apply CORS middleware to all routes
 	router.Use(auth.CORSMiddleware(cfg))
 
@@ -226,41 +231,41 @@ func setupHTTPServer(cfg config.Config, subscriberService *services.SubscriberSe
 	eventApiRouter.Use(auth.AuthMiddleware)
 
 	// Regular user endpoints for event subscriptions
-	eventApiRouter.HandleFunc("/subscribe", subscriptionHandler.Subscribe).Methods("POST")
-	eventApiRouter.HandleFunc("/unsubscribe/{eventId}", subscriptionHandler.Unsubscribe).Methods("DELETE")
-	eventApiRouter.HandleFunc("/is-subscribed/{eventId}", subscriptionHandler.IsSubscribed).Methods("GET")
-	eventApiRouter.HandleFunc("/user-subscriptions", subscriptionHandler.GetUserSubscriptions).Methods("GET")
+	eventApiRouter.HandleFunc("/subscribe", subscriptionHandler.Subscribe).Methods("POST", "OPTIONS")
+	eventApiRouter.HandleFunc("/unsubscribe/{eventId}", subscriptionHandler.Unsubscribe).Methods("DELETE", "OPTIONS")
+	eventApiRouter.HandleFunc("/is-subscribed/{eventId}", subscriptionHandler.IsSubscribed).Methods("GET", "OPTIONS")
+	eventApiRouter.HandleFunc("/user-subscriptions", subscriptionHandler.GetUserSubscriptions).Methods("GET", "OPTIONS")
 
 	// Admin endpoints for event subscriptions with additional middleware
 	eventAdminRouter := eventApiRouter.PathPrefix("/event-subscribers").Subrouter()
 	eventAdminRouter.Use(auth.AdminMiddleware)
-	eventAdminRouter.HandleFunc("/{eventId}", subscriptionHandler.GetEventSubscribers).Methods("GET")
+	eventAdminRouter.HandleFunc("/{eventId}", subscriptionHandler.GetEventSubscribers).Methods("GET", "OPTIONS")
 
 	// Session subscription API routes with authentication
 	sessionApiRouter := router.PathPrefix("/api/scheduler/session-subscription/v1").Subrouter()
 	sessionApiRouter.Use(auth.AuthMiddleware)
 
 	// Regular user endpoints for session subscriptions
-	sessionApiRouter.HandleFunc("/subscribe", sessionSubscriptionHandler.Subscribe).Methods("POST")
-	sessionApiRouter.HandleFunc("/unsubscribe/{sessionId}", sessionSubscriptionHandler.Unsubscribe).Methods("DELETE")
-	sessionApiRouter.HandleFunc("/is-subscribed/{sessionId}", sessionSubscriptionHandler.IsSubscribed).Methods("GET")
-	sessionApiRouter.HandleFunc("/user-subscriptions", sessionSubscriptionHandler.GetUserSubscriptions).Methods("GET")
+	sessionApiRouter.HandleFunc("/subscribe", sessionSubscriptionHandler.Subscribe).Methods("POST", "OPTIONS")
+	sessionApiRouter.HandleFunc("/unsubscribe/{sessionId}", sessionSubscriptionHandler.Unsubscribe).Methods("DELETE", "OPTIONS")
+	sessionApiRouter.HandleFunc("/is-subscribed/{sessionId}", sessionSubscriptionHandler.IsSubscribed).Methods("GET", "OPTIONS")
+	sessionApiRouter.HandleFunc("/user-subscriptions", sessionSubscriptionHandler.GetUserSubscriptions).Methods("GET", "OPTIONS")
 
 	// Admin endpoints for session subscriptions with additional middleware
 	sessionAdminRouter := sessionApiRouter.PathPrefix("/session-subscribers").Subrouter()
 	sessionAdminRouter.Use(auth.AdminMiddleware)
-	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET")
+	sessionAdminRouter.HandleFunc("/{sessionId}", sessionSubscriptionHandler.GetSessionSubscribers).Methods("GET", "OPTIONS")
 
 	// Create health handler for health check endpoints
 	healthHandler := handlers.NewHealthHandler(dbService)
 
 	// Healthcheck endpoints (no authentication required)
-	router.HandleFunc("/api/scheduler/health", healthHandler.HandleHealth).Methods("GET")
+	router.HandleFunc("/api/scheduler/health", healthHandler.HandleHealth).Methods("GET", "OPTIONS")
 
 	// K8s probe endpoints
-	router.HandleFunc("/healthz", healthHandler.HandleHealth).Methods("GET")   // General health endpoint for both liveness and readiness
-	router.HandleFunc("/readyz", healthHandler.HandleReadiness).Methods("GET") // Specific readiness probe endpoint
-	router.HandleFunc("/livez", healthHandler.HandleLiveness).Methods("GET")   // Specific liveness probe endpoint	// Start HTTP server
+	router.HandleFunc("/healthz", healthHandler.HandleHealth).Methods("GET", "OPTIONS")   // General health endpoint for both liveness and readiness
+	router.HandleFunc("/readyz", healthHandler.HandleReadiness).Methods("GET", "OPTIONS") // Specific readiness probe endpoint
+	router.HandleFunc("/livez", healthHandler.HandleLiveness).Methods("GET", "OPTIONS")   // Specific liveness probe endpoint	// Start HTTP server
 	serverAddr := cfg.ServerHost + ":" + cfg.ServerPort
 	log.Printf("Starting HTTP server on %s", serverAddr)
 
