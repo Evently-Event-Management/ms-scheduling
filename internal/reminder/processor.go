@@ -192,6 +192,28 @@ func (p *Processor) prepareSessionReminderData(sessionID string) ([]models.Subsc
 		log.Printf("Warning: Failed to marshal venue details for session %s: %v", sessionID, err)
 	}
 
+	// Fetch event details from event-query service
+	if sessionInfo.EventID != "" {
+		eventDetails, err := p.fetchEventBasicInfo(sessionInfo.EventID)
+		if err == nil {
+			sessionInfo.EventTitle = eventDetails.Title
+			sessionInfo.EventDescription = eventDetails.Description
+			sessionInfo.EventOverview = eventDetails.Overview
+			sessionInfo.EventCoverPhotos = eventDetails.CoverPhotos
+			if eventDetails.Organization.Name != "" {
+				sessionInfo.OrganizationName = eventDetails.Organization.Name
+				sessionInfo.OrganizationLogo = eventDetails.Organization.LogoURL
+			}
+			if eventDetails.Category.Name != "" {
+				sessionInfo.CategoryName = eventDetails.Category.Name
+			}
+		} else if errors.Is(err, errResourceNotFound) {
+			log.Printf("Event %s not found while preparing reminder for session %s", sessionInfo.EventID, sessionID)
+		} else {
+			log.Printf("Warning: Could not fetch event details for event %s: %v", sessionInfo.EventID, err)
+		}
+	}
+
 	sessionSubscribers, err := p.subscriberService.GetSessionSubscribers(sessionID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error getting session subscribers: %w", err)
@@ -202,18 +224,6 @@ func (p *Processor) prepareSessionReminderData(sessionID string) ([]models.Subsc
 		eventSubscribers, err = p.subscriberService.GetEventSubscribers(sessionInfo.EventID)
 		if err != nil {
 			log.Printf("Warning: Could not get event subscribers for event %s: %v", sessionInfo.EventID, err)
-		}
-	}
-
-	if sessionInfo.EventTitle == "" && sessionInfo.EventID != "" {
-		eventDetails, err := p.fetchEventBasicInfo(sessionInfo.EventID)
-		switch {
-		case err == nil:
-			sessionInfo.EventTitle = eventDetails.Title
-		case errors.Is(err, errResourceNotFound):
-			log.Printf("Event %s not found while preparing reminder for session %s", sessionInfo.EventID, sessionID)
-		default:
-			log.Printf("Warning: Could not fetch event title for event %s: %v", sessionInfo.EventID, err)
 		}
 	}
 

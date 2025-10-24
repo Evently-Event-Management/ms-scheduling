@@ -111,10 +111,44 @@ func (s *SubscriberService) ProcessSessionUpdate(sessionUpdate *models.DebeziumS
 func (s *SubscriberService) SendSessionUpdateEmails(subscribers []models.Subscriber, sessionUpdate *models.DebeziumSessionEvent) error {
 	log.Printf("Sending session update emails to %d subscribers", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildSessionUpdateEmail(subscriber, sessionUpdate)
+	operation := sessionUpdate.Payload.Operation
+	before := sessionUpdate.Payload.Before
+	after := sessionUpdate.Payload.After
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	// Get event title for context (we'll use event ID as fallback)
+	eventTitle := "Event"
+	if after != nil && after.EventID != "" {
+		eventTitle = s.getEventTitle(after.EventID)
+	} else if before != nil && before.EventID != "" {
+		eventTitle = s.getEventTitle(before.EventID)
+	}
+
+	for _, subscriber := range subscribers {
+		var err error
+
+		switch operation {
+		case "d": // Deletion/Cancellation
+			if before != nil && s.EmailManager != nil {
+				err = s.EmailManager.SendSessionCancelledEmail(subscriber.SubscriberMail, before, eventTitle)
+			} else {
+				// Fallback to old method
+				subject, body := s.buildSessionUpdateEmail(subscriber, sessionUpdate)
+				err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+			}
+		case "u": // Update
+			if before != nil && after != nil && s.EmailManager != nil {
+				err = s.EmailManager.SendSessionUpdatedEmail(subscriber.SubscriberMail, before, after, eventTitle)
+			} else {
+				// Fallback to old method
+				subject, body := s.buildSessionUpdateEmail(subscriber, sessionUpdate)
+				err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+			}
+		default:
+			// For other operations, use old method
+			subject, body := s.buildSessionUpdateEmail(subscriber, sessionUpdate)
+			err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		}
+
 		if err != nil {
 			log.Printf("Error sending session update email to %s: %v", subscriber.SubscriberMail, err)
 			continue
@@ -129,13 +163,29 @@ func (s *SubscriberService) SendSessionUpdateEmails(subscribers []models.Subscri
 func (s *SubscriberService) SendSessionCreationEmails(subscribers []models.Subscriber, sessionUpdate *models.DebeziumSessionEvent) error {
 	log.Printf("Sending session creation emails to %d event subscribers", len(subscribers))
 
+	after := sessionUpdate.Payload.After
+	if after == nil {
+		return nil
+	}
+
+	// Get event title for context
+	eventTitle := s.getEventTitle(after.EventID)
+
 	for _, subscriber := range subscribers {
-		subject, body := s.buildSessionCreationEmail(subscriber, sessionUpdate)
-		if subject == "" {
-			continue
+		var err error
+
+		if s.EmailManager != nil {
+			err = s.EmailManager.SendSessionCreatedEmail(subscriber.SubscriberMail, after, eventTitle)
+		} else {
+			// Fallback to old method
+			subject, body := s.buildSessionCreationEmail(subscriber, sessionUpdate)
+			if subject == "" {
+				continue
+			}
+			err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
 		}
 
-		if err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body); err != nil {
+		if err != nil {
 			log.Printf("Error sending session creation email to %s: %v", subscriber.SubscriberMail, err)
 			continue
 		}

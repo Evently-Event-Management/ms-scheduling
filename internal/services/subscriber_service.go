@@ -219,4 +219,12 @@ type SessionReminderInfo struct {
 	VenueDetails   string
 	SessionType    string
 	SalesStartTime int64
+	// Event details from event-query service
+	EventDescription string
+	EventOverview    string
+	EventCoverPhotos []string
+	OrganizationName string
+	OrganizationLogo string
+	CategoryName     string
 }
+

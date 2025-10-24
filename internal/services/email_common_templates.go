@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"ms-scheduling/internal/config"
 	"ms-scheduling/internal/models"
@@ -215,6 +216,109 @@ func generateVenueHTML(venue string) string {
 		return fmt.Sprintf("<li><strong>Venue:</strong> %s</li>", venue)
 	}
 	return ""
+}
+
+// VenueDetails represents the venue information structure
+type VenueDetails struct {
+	Name       string `json:"name"`
+	Address    string `json:"address"`
+	OnlineLink string `json:"onlineLink"`
+	Location   struct {
+		X           float64   `json:"x"`
+		Y           float64   `json:"y"`
+		Coordinates []float64 `json:"coordinates"`
+		Type        string    `json:"type"`
+	} `json:"location"`
+}
+
+func generateVenueWithMapHTML(venueJSON string) string {
+	if venueJSON == "" {
+		return ""
+	}
+
+	// Parse JSON properly
+	var venue VenueDetails
+	if err := json.Unmarshal([]byte(venueJSON), &venue); err != nil {
+		// If parsing fails, return simple text
+		return fmt.Sprintf(`
+			<div class="venue-section" style="margin: 20px 0;">
+				<h3 style="color: #2c3e50;">📍 Venue</h3>
+				<p>%s</p>
+			</div>
+		`, venueJSON)
+	}
+
+	// Check if it's an online event
+	if venue.OnlineLink != "" {
+		return fmt.Sprintf(`
+			<div class="venue-section" style="margin: 20px 0;">
+				<h3 style="color: #2c3e50; margin-bottom: 10px;">💻 Online Event</h3>
+				<div style="background-color: #f9f9f9; border-radius: 8px; padding: 15px;">
+					<p style="margin: 0 0 10px 0;"><strong>%s</strong></p>
+					<p style="text-align: center; margin-top: 10px;">
+						<a href="%s" class="btn btn-primary" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">
+							Join Online Event
+						</a>
+					</p>
+				</div>
+			</div>
+		`, venue.Name, venue.OnlineLink)
+	}
+
+	// Physical event with location
+	lat := venue.Location.Y
+	lng := venue.Location.X
+
+	if lat != 0 && lng != 0 {
+		mapURL := fmt.Sprintf("https://maps.google.com/maps?q=%f,%f&z=15&output=embed", lat, lng)
+		directionsURL := fmt.Sprintf("https://www.google.com/maps/dir/?api=1&destination=%f,%f", lat, lng)
+
+		addressHTML := ""
+		if venue.Address != "" {
+			addressHTML = fmt.Sprintf("<p style=\"margin: 0 0 10px 0; color: #666;\">📮 %s</p>", venue.Address)
+		}
+
+		return fmt.Sprintf(`
+			<div class="venue-section" style="margin: 20px 0;">
+				<h3 style="color: #2c3e50; margin-bottom: 10px;">📍 Venue Location</h3>
+				<div style="background-color: #f9f9f9; border-radius: 8px; padding: 15px;">
+					<p style="margin: 0 0 10px 0;"><strong>%s</strong></p>
+					%s
+					<div style="margin: 15px 0;">
+						<iframe 
+							width="100%%" 
+							height="250" 
+							frameborder="0" 
+							style="border:0; border-radius: 8px;" 
+							src="%s"
+							allowfullscreen>
+						</iframe>
+					</div>
+					<p style="text-align: center; margin-top: 10px;">
+						<a href="%s" class="btn btn-primary" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">
+							🗺️ Get Directions
+						</a>
+					</p>
+				</div>
+			</div>
+		`, venue.Name, addressHTML, mapURL, directionsURL)
+	}
+
+	// No coordinates, just show text
+	addressHTML := ""
+	if venue.Address != "" {
+		addressHTML = fmt.Sprintf("<p>📮 %s</p>", venue.Address)
+	}
+
+	return fmt.Sprintf(`
+		<div class="venue-section" style="margin: 20px 0;">
+			<h3 style="color: #2c3e50; margin-bottom: 10px;">📍 Venue</h3>
+			<div style="background-color: #f9f9f9; border-radius: 8px; padding: 15px;">
+				<p style="margin: 0 0 10px 0;"><strong>%s</strong></p>
+				%s
+			</div>
+		</div>
+	`, venue.Name, addressHTML)
 }
 
 // EmailTemplate holds the structure for an email
@@ -625,57 +729,112 @@ func generateSessionStartReminderEmail(cfg *config.Config, sessionInfo *SessionR
 	// Generate venue HTML if available
 	var venueHTML string
 	if sessionInfo.VenueDetails != "" {
-		venueHTML = fmt.Sprintf("<li><strong>Venue:</strong> %s</li>", sessionInfo.VenueDetails)
-	} else {
-		venueHTML = ""
+		venueHTML = generateVenueWithMapHTML(sessionInfo.VenueDetails)
+	}
+
+	// Generate event cover photo header if available
+	var coverPhotoHTML string
+	if len(sessionInfo.EventCoverPhotos) > 0 {
+		coverPhotoHTML = fmt.Sprintf(`
+			<div style="width: 100%%; max-height: 300px; overflow: hidden; border-radius: 8px; margin-bottom: 20px;">
+				<img src="%s" alt="Event Cover" style="width: 100%%; height: auto; display: block;">
+			</div>
+		`, sessionInfo.EventCoverPhotos[0])
+	}
+
+	// Generate organization info if available
+	var orgHTML string
+	if sessionInfo.OrganizationName != "" {
+		if sessionInfo.OrganizationLogo != "" {
+			orgHTML = fmt.Sprintf(`
+				<div style="display: flex; align-items: center; gap: 10px; margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 8px;">
+					<img src="%s" alt="%s" style="width: 40px; height: 40px; border-radius: 50%%; object-fit: cover;">
+					<div>
+						<p style="margin: 0; font-size: 12px; color: #666;">Organized by</p>
+						<p style="margin: 0; font-weight: bold;">%s</p>
+					</div>
+				</div>
+			`, sessionInfo.OrganizationLogo, sessionInfo.OrganizationName, sessionInfo.OrganizationName)
+		} else {
+			orgHTML = fmt.Sprintf(`
+				<div style="margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 8px;">
+					<p style="margin: 0; font-size: 12px; color: #666;">Organized by</p>
+					<p style="margin: 0; font-weight: bold;">%s</p>
+				</div>
+			`, sessionInfo.OrganizationName)
+		}
+	}
+
+	// Generate event description if available
+	var descriptionHTML string
+	if sessionInfo.EventOverview != "" {
+		descriptionHTML = fmt.Sprintf(`
+			<div class="event-description" style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #007bff; border-radius: 4px;">
+				<h3 style="margin-top: 0; color: #2c3e50;">About this Event</h3>
+				<p style="margin: 0; line-height: 1.6;">%s</p>
+			</div>
+		`, sessionInfo.EventOverview)
+	} else if sessionInfo.EventDescription != "" {
+		descriptionHTML = fmt.Sprintf(`
+			<div class="event-description" style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #007bff; border-radius: 4px;">
+				<h3 style="margin-top: 0; color: #2c3e50;">About this Event</h3>
+				<p style="margin: 0; line-height: 1.6;">%s</p>
+			</div>
+		`, sessionInfo.EventDescription)
 	}
 
 	content := fmt.Sprintf(`
 		<div class="header">
-			<h1>Event Reminder</h1>
+			<h1>🔔 Event Reminder</h1>
 		</div>
 		<div class="content">
+			%s
 			<div class="alert alert-info">
 				<strong>%s</strong> is happening tomorrow!
 			</div>
+			%s
+			%s
 			<p>Hello,</p>
 			<p>This is a friendly reminder about your upcoming event tomorrow.</p>
 			
-			<div class="session-details">
-				<h3>📅 Event Details:</h3>
-				<ul>
-					<li><strong>Event:</strong> %s</li>
-					<li><strong>Date:</strong> %s</li>
-					<li><strong>Time:</strong> %s to %s</li>
-					<li><strong>Duration:</strong> %s</li>
-					%s
-					<li><strong>Status:</strong> %s</li>
+			<div class="session-details" style="margin: 20px 0; padding: 15px; background-color: #fff; border: 1px solid #dee2e6; border-radius: 8px;">
+				<h3 style="color: #2c3e50;">📅 Event Details</h3>
+				<ul style="list-style: none; padding: 0;">
+					<li style="margin: 10px 0;"><strong>📌 Event:</strong> %s</li>
+					<li style="margin: 10px 0;"><strong>📆 Date:</strong> %s</li>
+					<li style="margin: 10px 0;"><strong>🕐 Time:</strong> %s to %s</li>
+					<li style="margin: 10px 0;"><strong>⏱️ Duration:</strong> %s</li>
+					<li style="margin: 10px 0;"><strong>✅ Status:</strong> %s</li>
 				</ul>
 			</div>
 			
-			<p class="text-center mt-4">
-				<a href="%s" class="btn btn-primary">View Event Details</a>
+			%s
+			
+			<p style="text-align: center; margin: 30px 0;">
+				<a href="%s" class="btn btn-primary" style="display: inline-block; padding: 12px 30px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
+					View Event Details
+				</a>
 			</p>
 			
-			<div class="mt-4">
-				<h3>📱 Add to Calendar:</h3>
-				<p>
-					<a href="%s" target="_blank">Add to Google Calendar</a> | 
-					<a href="%s" target="_blank">Add to Apple Calendar</a>
+			<div style="margin: 30px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
+				<h3 style="color: #2c3e50; margin-top: 0;">📱 Add to Calendar</h3>
+				<p style="text-align: center;">
+					<a href="%s" target="_blank" style="color: #007bff; text-decoration: none; margin: 0 10px;">📅 Google Calendar</a> | 
+					<a href="%s" target="_blank" style="color: #007bff; text-decoration: none; margin: 0 10px;">🍎 Apple Calendar</a>
 				</p>
 			</div>
 			
-			<div class="mt-4">
-				<h4>📋 Pre-Event Checklist:</h4>
-				<ul>
-					<li>Plan your route to the venue</li>
-					<li>Have your tickets ready</li>
-					<li>Check weather conditions</li>
-					<li>Arrive early to find good parking</li>
+			<div style="margin: 20px 0; padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+				<h4 style="margin-top: 0; color: #856404;">📋 Pre-Event Checklist</h4>
+				<ul style="color: #856404; line-height: 1.8;">
+					<li>✓ Plan your route to the venue</li>
+					<li>✓ Have your tickets ready</li>
+					<li>✓ Check weather conditions</li>
+					<li>✓ Arrive early to find good parking</li>
 				</ul>
 			</div>
 			
-			<p>We look forward to seeing you tomorrow!</p>
+			<p style="text-align: center; margin: 30px 0; font-size: 16px;">We look forward to seeing you tomorrow! 🎉</p>
 		</div>
 		<div class="footer">
 			<p>This is an automated reminder. Please do not reply to this email.</p>
@@ -683,14 +842,17 @@ func generateSessionStartReminderEmail(cfg *config.Config, sessionInfo *SessionR
 			<p>&copy; 2025 Ticketly. All rights reserved.</p>
 		</div>
 	`,
+		coverPhotoHTML,
 		eventTitle,
+		orgHTML,
+		descriptionHTML,
 		eventTitle,
 		dateStr,
 		startTimeStr,
 		endTimeStr,
 		durationStr,
-		venueHTML,
 		sessionInfo.Status,
+		venueHTML,
 		sessionURL,
 		googleCalLink,
 		appleCalLink,
@@ -712,6 +874,7 @@ func generateSessionSalesReminderEmail(cfg *config.Config, sessionInfo *SessionR
 	salesDateStr := salesStartTime.Format("Monday, January 2, 2006")
 	salesTimeStr := salesStartTime.Format("3:04 PM")
 	eventDateStr := startTime.Format("Monday, January 2, 2006")
+	eventTimeStr := startTime.Format("3:04 PM")
 
 	var eventTitle string
 	if sessionInfo.EventTitle != "" {
@@ -724,49 +887,102 @@ func generateSessionSalesReminderEmail(cfg *config.Config, sessionInfo *SessionR
 
 	sessionURL := generateSessionURL(cfg, sessionInfo.EventID, sessionInfo.SessionID)
 
-	// Generate venue HTML if available
-	var venueHTML string
-	if sessionInfo.VenueDetails != "" {
-		venueHTML = fmt.Sprintf("<li><strong>Venue:</strong> %s</li>", sessionInfo.VenueDetails)
-	} else {
-		venueHTML = ""
+	// Generate venue HTML with map if available
+	venueHTML := generateVenueWithMapHTML(sessionInfo.VenueDetails)
+
+	// Generate event cover photo header if available
+	var coverPhotoHTML string
+	if len(sessionInfo.EventCoverPhotos) > 0 {
+		coverPhotoHTML = fmt.Sprintf(`
+			<div style="width: 100%%; max-height: 300px; overflow: hidden; border-radius: 8px; margin-bottom: 20px;">
+				<img src="%s" alt="Event Cover" style="width: 100%%; height: auto; display: block;">
+			</div>
+		`, sessionInfo.EventCoverPhotos[0])
+	}
+
+	// Generate organization info if available
+	var orgHTML string
+	if sessionInfo.OrganizationName != "" {
+		if sessionInfo.OrganizationLogo != "" {
+			orgHTML = fmt.Sprintf(`
+				<div style="display: flex; align-items: center; gap: 10px; margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 8px;">
+					<img src="%s" alt="%s" style="width: 40px; height: 40px; border-radius: 50%%; object-fit: cover;">
+					<div>
+						<p style="margin: 0; font-size: 12px; color: #666;">Organized by</p>
+						<p style="margin: 0; font-weight: bold;">%s</p>
+					</div>
+				</div>
+			`, sessionInfo.OrganizationLogo, sessionInfo.OrganizationName, sessionInfo.OrganizationName)
+		} else {
+			orgHTML = fmt.Sprintf(`
+				<div style="margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 8px;">
+					<p style="margin: 0; font-size: 12px; color: #666;">Organized by</p>
+					<p style="margin: 0; font-weight: bold;">%s</p>
+				</div>
+			`, sessionInfo.OrganizationName)
+		}
+	}
+
+	// Generate event description if available
+	var descriptionHTML string
+	if sessionInfo.EventOverview != "" {
+		descriptionHTML = fmt.Sprintf(`
+			<div class="event-description" style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #ffc107; border-radius: 4px;">
+				<h3 style="margin-top: 0; color: #2c3e50;">About this Event</h3>
+				<p style="margin: 0; line-height: 1.6;">%s</p>
+			</div>
+		`, sessionInfo.EventOverview)
+	} else if sessionInfo.EventDescription != "" {
+		descriptionHTML = fmt.Sprintf(`
+			<div class="event-description" style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #ffc107; border-radius: 4px;">
+				<h3 style="margin-top: 0; color: #2c3e50;">About this Event</h3>
+				<p style="margin: 0; line-height: 1.6;">%s</p>
+			</div>
+		`, sessionInfo.EventDescription)
 	}
 
 	content := fmt.Sprintf(`
 		<div class="header">
-			<h1>Tickets Available Soon!</h1>
+			<h1>🎟️ Tickets Available Soon!</h1>
 		</div>
 		<div class="content">
-			<div class="alert alert-warning">
-				<strong>Tickets for %s will be available in 30 minutes!</strong>
+			%s
+			<div class="alert alert-warning" style="padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px; margin: 20px 0;">
+				<strong style="color: #856404; font-size: 18px;">⏰ Tickets for %s will be available in 30 minutes!</strong>
 			</div>
+			%s
+			%s
 			<p>Hello,</p>
 			<p>Don't miss your chance to secure your spot for this event. Tickets will be available for purchase shortly.</p>
 			
-			<div class="session-details">
-				<h3>🎫 Ticket Sales Information:</h3>
-				<ul>
-					<li><strong>Sales Start:</strong> %s at %s</li>
-					<li><strong>Event Date:</strong> %s</li>
-					<li><strong>Event Title:</strong> %s</li>
-					%s
+			<div class="session-details" style="margin: 20px 0; padding: 15px; background-color: #fff; border: 1px solid #dee2e6; border-radius: 8px;">
+				<h3 style="color: #2c3e50;">🎫 Ticket Sales Information</h3>
+				<ul style="list-style: none; padding: 0;">
+					<li style="margin: 10px 0;"><strong>⏰ Sales Start:</strong> %s at %s</li>
+					<li style="margin: 10px 0;"><strong>📅 Event Date:</strong> %s at %s</li>
+					<li style="margin: 10px 0;"><strong>📌 Event:</strong> %s</li>
 				</ul>
 			</div>
 			
-			<p class="text-center mt-4">
-				<a href="%s" class="btn btn-primary">Buy Tickets When Available</a>
+			%s
+			
+			<p style="text-align: center; margin: 30px 0;">
+				<a href="%s" class="btn btn-primary" style="display: inline-block; padding: 12px 30px; background-color: #ffc107; color: #000; text-decoration: none; border-radius: 5px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+					🎫 Buy Tickets When Available
+				</a>
 			</p>
 			
-			<p class="mt-4">
-				<strong>Tips for Quick Purchase:</strong>
-				<ul>
-					<li>Sign in to your account before sales begin</li>
-					<li>Have your payment method ready</li>
-					<li>Check that your billing information is up to date</li>
+			<div style="margin: 20px 0; padding: 15px; background-color: #e7f3ff; border-left: 4px solid #007bff; border-radius: 4px;">
+				<h4 style="margin-top: 0; color: #004085;">💡 Tips for Quick Purchase</h4>
+				<ul style="color: #004085; line-height: 1.8;">
+					<li>✓ Sign in to your account before sales begin</li>
+					<li>✓ Have your payment method ready</li>
+					<li>✓ Check that your billing information is up to date</li>
+					<li>✓ Be ready at your computer when sales start</li>
 				</ul>
-			</p>
+			</div>
 			
-			<p>Be ready to purchase as soon as tickets are available!</p>
+			<p style="text-align: center; margin: 30px 0; font-size: 16px;">Be ready to purchase as soon as tickets are available! ⏱️</p>
 		</div>
 		<div class="footer">
 			<p>This is an automated notification. Please do not reply to this email.</p>
@@ -774,10 +990,14 @@ func generateSessionSalesReminderEmail(cfg *config.Config, sessionInfo *SessionR
 			<p>&copy; 2025 Ticketly. All rights reserved.</p>
 		</div>
 	`,
+		coverPhotoHTML,
 		eventTitle,
+		orgHTML,
+		descriptionHTML,
 		salesDateStr,
 		salesTimeStr,
 		eventDateStr,
+		eventTimeStr,
 		eventTitle,
 		venueHTML,
 		sessionURL,
