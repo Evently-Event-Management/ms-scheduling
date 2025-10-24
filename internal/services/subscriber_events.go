@@ -85,10 +85,44 @@ func (s *SubscriberService) GetEventSubscribers(eventID string) ([]models.Subscr
 func (s *SubscriberService) SendEventUpdateEmails(subscribers []models.Subscriber, eventUpdate *models.DebeziumEventEvent) error {
 	log.Printf("Sending event update emails to %d subscribers", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildEventUpdateEmail(subscriber, eventUpdate)
+	operation := eventUpdate.Payload.Operation
+	before := eventUpdate.Payload.Before
+	after := eventUpdate.Payload.After
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	// Get organization name for context
+	organizationName := "Organization"
+	if after != nil && after.OrganizationID != "" {
+		organizationName = s.getOrganizationName(after.OrganizationID)
+	} else if before != nil && before.OrganizationID != "" {
+		organizationName = s.getOrganizationName(before.OrganizationID)
+	}
+
+	for _, subscriber := range subscribers {
+		var err error
+
+		switch operation {
+		case "d": // Deletion/Cancellation
+			if before != nil && s.EmailManager != nil {
+				err = s.EmailManager.SendEventCancelledEmail(subscriber.SubscriberMail, before, organizationName)
+			} else {
+				// Fallback to old method
+				subject, body := s.buildEventUpdateEmail(subscriber, eventUpdate)
+				err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+			}
+		case "u": // Update
+			if before != nil && after != nil && s.EmailManager != nil {
+				err = s.EmailManager.SendEventUpdatedEmail(subscriber.SubscriberMail, before, after, organizationName)
+			} else {
+				// Fallback to old method
+				subject, body := s.buildEventUpdateEmail(subscriber, eventUpdate)
+				err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+			}
+		default:
+			// For other operations, use old method
+			subject, body := s.buildEventUpdateEmail(subscriber, eventUpdate)
+			err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+		}
+
 		if err != nil {
 			log.Printf("Error sending event update email to %s: %v", subscriber.SubscriberMail, err)
 			continue
@@ -267,10 +301,28 @@ func (s *SubscriberService) ProcessEventCreation(eventUpdate *models.DebeziumEve
 func (s *SubscriberService) SendEventCreationEmails(subscribers []models.Subscriber, eventUpdate *models.DebeziumEventEvent) error {
 	log.Printf("Sending event creation emails to %d subscribers", len(subscribers))
 
-	for _, subscriber := range subscribers {
-		subject, body := s.buildEventCreationEmail(subscriber, eventUpdate)
+	after := eventUpdate.Payload.After
+	if after == nil {
+		return nil
+	}
 
-		err := s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+	// Get organization name for context
+	organizationName := s.getOrganizationName(after.OrganizationID)
+
+	for _, subscriber := range subscribers {
+		var err error
+
+		// Check if this is an approval (PENDING -> APPROVED) or initial creation with APPROVED status
+		if after.Status == "APPROVED" && s.EmailManager != nil {
+			err = s.EmailManager.SendEventCreatedEmail(subscriber.SubscriberMail, after, organizationName)
+		} else {
+			// Fallback to old method or skip if not approved
+			subject, body := s.buildEventCreationEmail(subscriber, eventUpdate)
+			if subject != "" {
+				err = s.EmailService.SendEmail(subscriber.SubscriberMail, subject, body)
+			}
+		}
+
 		if err != nil {
 			log.Printf("Error sending event creation email to %s: %v", subscriber.SubscriberMail, err)
 			continue

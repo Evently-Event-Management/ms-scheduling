@@ -3,6 +3,7 @@ package services
 import (
 	"log"
 
+	"ms-scheduling/internal/email/templates"
 	"ms-scheduling/internal/models"
 )
 
@@ -10,7 +11,28 @@ import (
 func (s *SubscriberService) SendOrderConfirmationEmail(subscriber *models.Subscriber, order *OrderCreatedEvent) error {
 	log.Printf("Sending order email to %s for order %s with status %s", subscriber.SubscriberMail, order.OrderID, order.Status)
 
-	// Determine email template type based on order status
+	// Convert to OrderData format for new template system
+	if s.EmailManager != nil {
+		orderData := convertToOrderData(order)
+
+		var err error
+		switch order.Status {
+		case "completed":
+			err = s.EmailManager.SendOrderConfirmedEmail(subscriber.SubscriberMail, orderData)
+		case "pending":
+			err = s.EmailManager.SendOrderPendingEmail(subscriber.SubscriberMail, orderData)
+		case "cancelled":
+			err = s.EmailManager.SendOrderCancelledEmail(subscriber.SubscriberMail, orderData)
+		case "processing":
+			err = s.EmailManager.SendOrderUpdatedEmail(subscriber.SubscriberMail, orderData)
+		default:
+			err = s.EmailManager.SendOrderPendingEmail(subscriber.SubscriberMail, orderData)
+		}
+
+		return err
+	}
+
+	// Fallback to old template system
 	var emailType EmailType
 	switch order.Status {
 	case "completed":
@@ -22,13 +44,10 @@ func (s *SubscriberService) SendOrderConfirmationEmail(subscriber *models.Subscr
 	case "processing":
 		emailType = EmailOrderProcessing
 	default:
-		emailType = EmailOrderPending // Default to pending if status is unknown
+		emailType = EmailOrderPending
 	}
 
-	// Generate email using our new template system
 	emailTemplate := GenerateEmailTemplate(s.Config, emailType, order)
-
-	// Send the email
 	return s.EmailService.SendEmail(subscriber.SubscriberMail, emailTemplate.Subject, emailTemplate.HTML)
 }
 
@@ -62,4 +81,36 @@ type Ticket struct {
 	IssuedAt        string  `json:"issued_at"`
 	CheckedIn       bool    `json:"checked_in"`
 	CheckedInTime   string  `json:"checked_in_time"`
+}
+
+// convertToOrderData converts OrderCreatedEvent to templates.OrderData
+func convertToOrderData(order *OrderCreatedEvent) *templates.OrderData {
+	// Convert tickets
+	ticketData := make([]templates.TicketData, len(order.Tickets))
+	for i, ticket := range order.Tickets {
+		ticketData[i] = templates.TicketData{
+			TicketID:        ticket.TicketID,
+			SeatLabel:       ticket.SeatLabel,
+			TierName:        ticket.TierName,
+			PriceAtPurchase: ticket.PriceAtPurchase,
+		}
+	}
+
+	return &templates.OrderData{
+		OrderID:        order.OrderID,
+		UserID:         order.UserID,
+		EventID:        order.EventID,
+		SessionID:      order.SessionID,
+		OrganizationID: order.OrganizationID,
+		Status:         order.Status,
+		SubTotal:       order.SubTotal,
+		DiscountCode:   order.DiscountCode,
+		DiscountAmount: order.DiscountAmount,
+		Price:          order.Price,
+		CreatedAt:      order.CreatedAt,
+		PaymentAt:      order.PaymentAT,
+		Tickets:        ticketData,
+		EventTitle:     "", // Will need to fetch from DB if needed
+		SessionTitle:   "", // Will need to fetch from DB if needed
+	}
 }

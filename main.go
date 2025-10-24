@@ -16,6 +16,8 @@ import (
 
 	auth "ms-scheduling/internal/auth"
 	"ms-scheduling/internal/config"
+	"ms-scheduling/internal/email"
+	"ms-scheduling/internal/email/templates"
 	"ms-scheduling/internal/eventbridge"
 	"ms-scheduling/internal/handlers"
 	"ms-scheduling/internal/kafka"
@@ -102,6 +104,12 @@ func main() {
 
 	// Initialize subscriber service
 	subscriberService := services.NewSubscriberService(dbService.DB, keycloakClient, emailService, &cfg)
+
+	// Initialize email manager with templates for better emails
+	templateGenerator := templates.NewStandardTemplateGenerator()
+	emailManager := email.NewEmailManager(emailService, cfg, templateGenerator)
+	subscriberService.SetEmailManager(emailManager)
+	log.Printf("Email manager initialized with professional templates")
 
 	// Start Kafka consumers in separate goroutines if Kafka URL is configured
 	if cfg.KafkaURL != "" {
